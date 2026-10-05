@@ -54,6 +54,15 @@
             android:taskAffinity="io.wearbridge.watch.call"
             android:turnScreenOn="true" />
 
+        <activity
+            android:name=".find.FindWatchActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:taskAffinity="io.wearbridge.watch.find"
+            android:turnScreenOn="true" />
+
         <service
             android:name=".service.BridgeService"
             android:exported="false"
@@ -70,6 +79,10 @@
 
         <receiver
             android:name=".notifications.ActionReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".find.FindWatchReceiver"
             android:exported="false" />
     </application>
 </manifest>

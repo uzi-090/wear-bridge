@@ -8,6 +8,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.BatteryManager
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import io.wearbridge.ams.AmsUuids
@@ -18,7 +19,12 @@ import io.wearbridge.ancs.AncsUuids
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.BridgePermissions
 import io.wearbridge.watch.ancs.AncsClient
+import io.wearbridge.protocol.BridgeCodec
+import io.wearbridge.protocol.BridgeMessageType
+import io.wearbridge.watch.bridge.DeviceChannel
 import io.wearbridge.watch.bridge.SettingsChannel
+import io.wearbridge.watch.bridge.WatchBattery
+import io.wearbridge.watch.find.FindPhoneState
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
 import io.wearbridge.watch.media.AmsClient
@@ -31,6 +37,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -62,6 +69,8 @@ class ConnectionManager(
     private val pairing = PairingManager(scope, onBonded = { dispatch(LinkEvent.Bonded) }, onFailed = { dispatch(LinkEvent.BondFailed) })
     private val reconnection = ReconnectionManager(scope) { dispatch(LinkEvent.RetryTimer) }
     private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, BridgeGraph.icons, BridgeGraph.settings, scope)
+    private val deviceChannel = DeviceChannel(peripheral, scope, appVersion(context))
+    private var findPhoneTimeout: Job? = null
 
     private var device: BluetoothDevice? = null
     private var session: GattSession? = null
@@ -80,7 +89,10 @@ class ConnectionManager(
         data class BondState(val device: BluetoothDevice, val state: Int, val previous: Int) : Msg
         data class Action(val uid: Long, val action: ActionId) : Msg
         data class SettingsChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
-        data class SettingsSubscription(val device: BluetoothDevice, val subscribed: Boolean) : Msg
+        data class Subscription(val device: BluetoothDevice, val characteristic: UUID, val subscribed: Boolean) : Msg
+        data class ControlChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
+        data class FindPhone(val ring: Boolean) : Msg
+        data class Event(val type: Int, val payload: ByteArray) : Msg
         data class Media(val command: RemoteCommand) : Msg
         data object Shutdown : Msg
     }
@@ -110,6 +122,10 @@ class ConnectionManager(
 
     fun mediaCommand(command: RemoteCommand) = post(Msg.Media(command))
 
+    fun findPhone(ring: Boolean) = post(Msg.FindPhone(ring))
+
+    fun sendEvent(type: Int, payload: ByteArray) = post(Msg.Event(type, payload))
+
     private fun post(msg: Msg) {
         inbox.trySend(msg)
     }
@@ -138,13 +154,22 @@ class ConnectionManager(
             }
             is Msg.CentralDisconnected -> {
                 settingsChannel.onDisconnected(msg.device)
+                deviceChannel.onDisconnected(msg.device)
                 if (msg.device.address == device?.address) {
                     device = null
                     dispatch(LinkEvent.CentralDisconnected)
                 }
             }
             is Msg.SettingsChunk -> settingsChannel.onChunk(msg.device, msg.value)
-            is Msg.SettingsSubscription -> settingsChannel.onSubscription(msg.device, msg.subscribed)
+            is Msg.Subscription ->
+                if (msg.characteristic == BridgeUuids.SETTINGS) {
+                    settingsChannel.onSubscription(msg.device, msg.subscribed)
+                } else {
+                    deviceChannel.onSubscription(msg.device, msg.characteristic, msg.subscribed)
+                }
+            is Msg.ControlChunk -> deviceChannel.onControlChunk(msg.device, msg.value)
+            is Msg.Event -> deviceChannel.sendEvent(msg.type, msg.payload)
+            is Msg.FindPhone -> ringPhone(msg.ring)
             is Msg.ClientDisconnected -> if (device != null && msg.session === session) {
                 DiagLog.i("gatt client dropped status=${msg.status}")
                 dispatch(LinkEvent.SetupFailed)
@@ -293,6 +318,31 @@ class ConnectionManager(
     }
 
     /**
+     * Find iPhone: an event to the iPhone app, which plays an alert. Only works while the app is
+     * connected (iOS can suspend it, and a force-quit app is never relaunched), so the UI says so.
+     */
+    private fun ringPhone(ring: Boolean) {
+        findPhoneTimeout?.cancel()
+        if (!ring) {
+            deviceChannel.sendEvent(BridgeMessageType.FIND_PHONE, BridgeCodec.encodeSwitch(false))
+            BridgeGraph.findPhoneFlow.value = FindPhoneState.IDLE
+            return
+        }
+        val state = when {
+            sm.snapshot.state != LinkState.READY -> FindPhoneState.NO_LINK
+            !deviceChannel.sendEvent(BridgeMessageType.FIND_PHONE, BridgeCodec.encodeSwitch(true)) -> FindPhoneState.NO_APP
+            else -> FindPhoneState.RINGING
+        }
+        DiagLog.i("find phone: $state")
+        BridgeGraph.findPhoneFlow.value = state
+        // The iPhone's alert sound lasts 30 s. Back to idle after that (or an error message clears itself).
+        findPhoneTimeout = scope.launch {
+            delay(FIND_PHONE_MS)
+            BridgeGraph.findPhoneFlow.value = FindPhoneState.IDLE
+        }
+    }
+
+    /**
      * Media (AMS) and the iPhone's battery/model. Started only once notifications work, and failures
      * here are logged, never fatal: they can't take ANCS down.
      */
@@ -354,12 +404,10 @@ class ConnectionManager(
         override fun onCentralDisconnected(device: BluetoothDevice) = post(Msg.CentralDisconnected(device))
         override fun onAdvertisingFailed(errorCode: Int, unsupported: Boolean) =
             post(Msg.Link(LinkEvent.AdvertisingFailed(unsupported)))
-        override fun onControlWrite(device: BluetoothDevice, value: ByteArray) {
-            DiagLog.i("bridge control write ${value.size} bytes from ${Redact.device(device)}")
-        }
+        override fun onControlWrite(device: BluetoothDevice, value: ByteArray) = post(Msg.ControlChunk(device, value))
         override fun onSettingsChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.SettingsChunk(device, value))
-        override fun onSettingsSubscription(device: BluetoothDevice, subscribed: Boolean) =
-            post(Msg.SettingsSubscription(device, subscribed))
+        override fun onSubscription(device: BluetoothDevice, characteristic: UUID, subscribed: Boolean) =
+            post(Msg.Subscription(device, characteristic, subscribed))
     }
 
     private val systemReceiver = object : BroadcastReceiver() {
@@ -368,6 +416,13 @@ class ConnectionManager(
                 BluetoothAdapter.ACTION_STATE_CHANGED -> when (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1)) {
                     BluetoothAdapter.STATE_ON -> post(Msg.Link(LinkEvent.BluetoothOn))
                     BluetoothAdapter.STATE_TURNING_OFF, BluetoothAdapter.STATE_OFF -> post(Msg.Link(LinkEvent.BluetoothOff))
+                }
+                Intent.ACTION_BATTERY_CHANGED -> {
+                    val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                    val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
+                    val plugged = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+                    val b = WatchBattery(if (level >= 0 && scale > 0) level * 100 / scale else null, plugged)
+                    if (BridgeGraph.watchBattery.value != b) BridgeGraph.watchBatteryFlow.value = b
                 }
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
                     val d = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
@@ -387,9 +442,15 @@ class ConnectionManager(
         val filter = IntentFilter().apply {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            addAction(Intent.ACTION_BATTERY_CHANGED) // sticky: delivers the current level at once
         }
         // Both are protected system broadcasts, so other apps can't spoof them.
         ContextCompat.registerReceiver(context, systemReceiver, filter, ContextCompat.RECEIVER_EXPORTED)
         receiversRegistered = true
     }
 }
+
+private const val FIND_PHONE_MS = 30_000L
+
+private fun appVersion(context: Context): String =
+    runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty()

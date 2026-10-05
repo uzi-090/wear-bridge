@@ -130,7 +130,7 @@ class SettingsChannel(
         val payload = SettingsCodec.encodeSnapshot(snapshot())
         messageId = (messageId + 1) and 0xFF
         val chunks = Framing.split(MessageType.SETTINGS, messageId, payload, peripheral.maxPayload(device))
-        peripheral.notifySettings(device, chunks)
+        peripheral.notify(device, io.wearbridge.watch.ble.BridgeUuids.SETTINGS, chunks)
         DiagLog.i("settings: snapshot ${payload.size}B in ${chunks.size} chunks to ${Redact.device(device)}")
     }
 

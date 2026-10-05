@@ -10,6 +10,9 @@ import io.wearbridge.ams.NowPlaying
 import io.wearbridge.ams.RemoteCommand
 import io.wearbridge.ancs.ActionId
 import io.wearbridge.watch.ble.ConnectionManager
+import io.wearbridge.watch.bridge.WatchBattery
+import io.wearbridge.watch.find.FindPhoneState
+import io.wearbridge.watch.find.FindWatchAlert
 import io.wearbridge.watch.ble.LinkSnapshot
 import io.wearbridge.watch.notifications.ActionStatus
 import io.wearbridge.watch.notifications.MirrorNotifier
@@ -39,6 +42,19 @@ object BridgeGraph {
         private set
     lateinit var icons: AppIconStore
         private set
+    lateinit var findWatch: FindWatchAlert
+        private set
+
+    /** The watch's own battery (from ACTION_BATTERY_CHANGED), sent to the iPhone app. */
+    internal val watchBatteryFlow = MutableStateFlow(WatchBattery())
+    val watchBattery: StateFlow<WatchBattery> = watchBatteryFlow
+
+    /** True while the iPhone app is connected and listening for events (needed for Find iPhone). */
+    internal val phoneAppConnectedFlow = MutableStateFlow(false)
+    val phoneAppConnected: StateFlow<Boolean> = phoneAppConnectedFlow
+
+    internal val findPhoneFlow = MutableStateFlow(FindPhoneState.IDLE)
+    val findPhone: StateFlow<FindPhoneState> = findPhoneFlow
 
     internal val linkFlow = MutableStateFlow(LinkSnapshot())
     val link: StateFlow<LinkSnapshot> = linkFlow
@@ -75,6 +91,7 @@ object BridgeGraph {
         policy = PolicyStore(app)
         icons = AppIconStore(app)
         notifier = MirrorNotifier(app, settings).also { it.createChannels() }
+        findWatch = FindWatchAlert(app).also { it.createChannel() }
     }
 
     fun performAction(uid: Long, action: ActionId) {
@@ -100,6 +117,16 @@ object BridgeGraph {
     fun setHistory(enabled: Boolean) {
         settings.setHistoryFlag(enabled)
         if (!enabled) repository.clearHistory()
+    }
+
+    /** Rings the iPhone (best effort: needs the iPhone app alive in the background). */
+    fun findPhone(ring: Boolean) {
+        val c = controller
+        if (c == null) findPhoneFlow.value = FindPhoneState.NO_LINK else c.findPhone(ring)
+    }
+
+    internal fun sendEvent(type: Int, payload: ByteArray = ByteArray(0)) {
+        controller?.sendEvent(type, payload)
     }
 
     fun mediaCommand(command: RemoteCommand) {

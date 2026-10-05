@@ -31,6 +31,15 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             BridgeGraph.deleteAll()
             io.wearbridge.watch.diagnostics.DiagLog.i("demo mode ON")
         }
+        // `--ez find_phone true|false` rings/stops the iPhone; `--ez find_watch true|false` rings/stops this watch.
+        if (intent.hasExtra("find_phone")) {
+            BridgeGraph.findPhone(intent.getBooleanExtra("find_phone", false))
+            return
+        }
+        if (intent.hasExtra("find_watch")) {
+            if (intent.getBooleanExtra("find_watch", false)) BridgeGraph.findWatch.start() else BridgeGraph.findWatch.stop(fromUser = true)
+            return
+        }
         // `--es media VOLUME_UP` sends a real AMS command. `--ez fake_media true` shows fake Now Playing (demo mode).
         intent.getStringExtra("media")?.let { name ->
             io.wearbridge.ams.RemoteCommand.entries.firstOrNull { it.name == name }?.let(BridgeGraph::mediaCommand)

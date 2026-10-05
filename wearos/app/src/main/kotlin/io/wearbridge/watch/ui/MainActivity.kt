@@ -106,12 +106,14 @@ private fun WatchApp(
                     onRequestPermissions = onRequestPermissions,
                     onOpenNotifications = { nav.navigate("notifications") },
                     onOpenMedia = { nav.navigate("media") },
+                    onOpenFindPhone = { nav.navigate("find") },
                     onOpenDiagnostics = { nav.navigate("diagnostics") },
                     onOpenSettings = { nav.navigate("settings") },
                 )
             }
             composable("settings") { SettingsScreen() }
             composable("media") { MediaScreen() }
+            composable("find") { io.wearbridge.watch.find.FindPhoneScreen() }
             composable("notifications") {
                 NotificationListScreen(
                     onOpen = { uid -> nav.navigate("notification/$uid") },

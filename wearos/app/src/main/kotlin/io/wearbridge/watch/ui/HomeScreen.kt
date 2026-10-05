@@ -47,6 +47,7 @@ fun HomeScreen(
     onRequestPermissions: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenMedia: () -> Unit,
+    onOpenFindPhone: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -133,6 +134,13 @@ fun HomeScreen(
                         )
                     },
                     icon = { androidx.wear.compose.material3.Icon(androidx.compose.ui.res.painterResource(io.wearbridge.watch.R.drawable.ic_music_note), contentDescription = null) },
+                )
+            }
+            item {
+                FilledTonalButton(
+                    onClick = onOpenFindPhone,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Find iPhone") },
                 )
             }
             item {
