@@ -26,6 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalContext
@@ -121,14 +122,8 @@ private fun Pulse(active: Boolean) {
     val reduceMotion = remember {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
-    val phase = rememberInfiniteTransition(label = "find").animateFloat(0f, 1f, infiniteRepeatable(tween(1_600)), label = "p").value
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(84.dp)) {
-        if (active && !reduceMotion) {
-            for (offset in listOf(0f, 0.5f)) {
-                val p = (phase + offset) % 1f
-                Box(Modifier.size(58.dp).scale(1f + 0.4f * p).alpha(0.5f * (1f - p)).background(MaterialTheme.colorScheme.primary, CircleShape))
-            }
-        }
+        if (active && !reduceMotion) io.wearbridge.watch.ui.theme.Ripples(MaterialTheme.colorScheme.primary, 58.dp, spread = 0.4f, maxAlpha = 0.5f, periodMs = 1_600)
         Box(
             Modifier.size(58.dp).background(MaterialTheme.colorScheme.primaryContainer, CircleShape),
             contentAlignment = Alignment.Center,

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Demo routes and tools for screenshots and profiling. On in debug/profiling builds only. -->
+    <bool name="demo_tools">false</bool>
+</resources>

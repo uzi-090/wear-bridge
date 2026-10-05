@@ -67,8 +67,7 @@ class MainActivity : ComponentActivity() {
     private fun readDeepLink(intent: Intent?) {
         intent?.getLongExtra(EXTRA_UID, -1)?.takeIf { it >= 0 }?.let { deepLinkUid = it }
         // Debuggable builds only: `am start ... --es route apps` opens a screen for UI checks.
-        val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
-        if (debuggable) intent?.getStringExtra("route")?.let { debugRoute = it }
+        if (resources.getBoolean(io.wearbridge.watch.R.bool.demo_tools)) intent?.getStringExtra("route")?.let { debugRoute = it }
     }
 
     companion object {

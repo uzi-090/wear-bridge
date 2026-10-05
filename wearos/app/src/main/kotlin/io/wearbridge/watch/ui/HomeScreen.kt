@@ -26,7 +26,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -195,16 +195,22 @@ private fun StatusLine(link: LinkSnapshot, modifier: Modifier) {
     }
     val context = LocalContext.current
     val reduceMotion = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
-    val pulse = if (ok && !reduceMotion) {
-        rememberInfiniteTransition(label = "pulse").animateFloat(1f, 0.4f, infiniteRepeatable(tween(1_600), RepeatMode.Reverse), label = "a").value
-    } else 1f
+    // Two gentle pulses when the link comes up, then still: an endless animation would redraw the
+    // screen every frame (jank, and battery on a watch). Animated in the draw layer only.
+    val pulse = remember { androidx.compose.animation.core.Animatable(1f) }
+    androidx.compose.runtime.LaunchedEffect(ok) {
+        if (ok && !reduceMotion) repeat(2) {
+            pulse.animateTo(0.35f, tween(450))
+            pulse.animateTo(1f, tween(450))
+        } else pulse.snapTo(1f)
+    }
     Row(
         horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier.padding(top = 4.dp, bottom = 2.dp).clearAndSetSemantics { contentDescription = "Status: $headline" },
     ) {
         Box(
-            Modifier.size(8.dp).alpha(pulse)
+            Modifier.size(8.dp).graphicsLayer { alpha = pulse.value }
                 .then(if (ok) Modifier.background(color, CircleShape) else Modifier.border(2.dp, color, CircleShape)),
         )
         Spacer(Modifier.width(6.dp))

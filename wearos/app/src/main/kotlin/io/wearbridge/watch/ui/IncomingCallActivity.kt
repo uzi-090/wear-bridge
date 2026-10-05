@@ -29,6 +29,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.EdgeButton
+import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -43,7 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -156,17 +161,19 @@ class IncomingCallActivity : ComponentActivity() {
     }
 }
 
-private val Green = Color(0xFF34C759)
-private val Red = Color(0xFFFF3B30)
+private val Green = io.wearbridge.watch.ui.theme.BridgePalette.CallGreen
+private val Red = io.wearbridge.watch.ui.theme.BridgePalette.CallRed
 
+/**
+ * Ringing. Answer and Decline sit at 3 and 9 o'clock (the widest part of the circle, beside the bezel
+ * arcs that fill as you turn it); the caller is in the middle; Silence is the edge button.
+ */
 @Composable
 private fun RingingScreen(state: CallUi.Ringing) {
     val haptics = LocalHapticFeedback.current
     val a = state.call.ancs
     val bezelEnabled by BridgeGraph.settings.bezelToAnswer.collectAsStateWithLifecycle()
-    val shakeEnabled by BridgeGraph.settings.shakeToDecline.collectAsStateWithLifecycle()
     val focus = remember { FocusRequester() }
-    // Bezel progress: +1..+3 toward Answer, -1..-3 toward Decline. Resets after a pause.
     var clicks by remember { mutableIntStateOf(0) }
     var accumulated by remember { mutableFloatStateOf(0f) }
     var lastTurnAt by remember { mutableLongStateOf(0L) }
@@ -211,123 +218,100 @@ private fun RingingScreen(state: CallUi.Ringing) {
             .focusRequester(focus)
             .focusable(),
     ) {
+        CallerGlow(state.caller)
         BezelArc(clicks)
-        // Sized for a ~214 dp round screen: everything stays inside the circle, and the three call
-        // controls sit across its widest part.
+
+        // Top: Silence (watch only; the iPhone keeps ringing).
+        androidx.wear.compose.material3.CompactButton(
+            onClick = { BridgeGraph.calls.silence() },
+            enabled = !state.silenced,
+            colors = ButtonDefaults.filledTonalButtonColors(containerColor = Color(0xFF2A2F35), contentColor = Color.White),
+            icon = if (state.silenced) null else {
+                { Icon(painterResource(R.drawable.ic_silence), contentDescription = null, modifier = Modifier.size(16.dp)) }
+            },
+            label = { Text(if (state.silenced) "Silenced" else "Silence", maxLines = 1) },
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 14.dp)
+                .semantics { contentDescription = "Silence the watch. The iPhone keeps ringing." },
+        )
+
+        // Centre: who's calling. The name is the hero; the number is small beneath it.
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.align(Alignment.Center).offset(y = (-14).dp).padding(horizontal = 22.dp),
         ) {
-            // The top line teaches the bezel gesture (it's the least obvious); otherwise it names the source.
-            Text(
-                if (bezelEnabled && a.positiveActionLabel != null) "Turn bezel to answer" else "iPhone call",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White.copy(alpha = 0.55f),
-                maxLines = 1,
-            )
-            Spacer(Modifier.height(2.dp))
+            Text("Incoming call", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.55f))
             Text(
                 state.caller.name + if (state.caller.contact?.favorite == true) " ★" else "",
-                style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                style = MaterialTheme.typography.titleLarge.copy(textDirection = TextDirection.Content),
                 color = Color.White,
                 textAlign = TextAlign.Center,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 30.dp),
+                modifier = Modifier.padding(top = 2.dp),
             )
             if (state.caller.detail.isNotBlank()) {
-                Text(
-                    state.caller.detail,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color.White.copy(alpha = 0.66f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Text(state.caller.detail, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f), maxLines = 1)
             }
-            Spacer(Modifier.height(6.dp))
-            // Decline – avatar – Answer, across the widest part of the circle.
-            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                CallButton(R.drawable.ic_call_end, a.negativeActionLabel, Red, ::decline)
-                Avatar(state.caller, ringing = !state.silenced, size = 50.dp)
-                CallButton(R.drawable.ic_call, a.positiveActionLabel, Green, ::answer)
-            }
-            Spacer(Modifier.height(6.dp))
-            if (state.silenced) {
-                Text("Silenced on watch", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.6f),
-                    modifier = Modifier.height(36.dp).padding(top = 10.dp))
-            } else {
-                SilenceButton { BridgeGraph.calls.silence() }
-            }
-            if (shakeEnabled && a.negativeActionLabel != null) {
-                Spacer(Modifier.semantics { contentDescription = "You can also shake your wrist to decline" })
-            }
+        }
+
+        // Bottom half: Decline · Answer, side by side where the circle still has room for both.
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(30.dp),
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp),
+        ) {
+            SideAction(R.drawable.ic_call_end, a.negativeActionLabel, Red, breathe = false, onClick = ::decline)
+            SideAction(R.drawable.ic_call, a.positiveActionLabel, Green, breathe = !state.silenced, onClick = ::answer)
         }
     }
 }
 
-/** A round action button with iOS's label under it. Absent label = iOS doesn't offer it: no button. */
+/**
+ * A big round call action. iOS's own label is its TalkBack label (icon and colour say it visually).
+ * Absent label = iOS doesn't offer it: no button. [breathe] gives Answer a slow scale pulse (draw phase only).
+ */
 @Composable
-private fun CallButton(icon: Int, label: String?, color: Color, onClick: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(60.dp).padding(top = 5.dp)) {
+private fun SideAction(icon: Int, label: String?, color: Color, breathe: Boolean, onClick: () -> Unit) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(58.dp)) {
         if (label == null) {
-            Spacer(Modifier.size(50.dp))
+            Spacer(Modifier.size(56.dp))
             return@Column
         }
+        val reduceMotion = rememberReduceMotion()
+        val scale = if (breathe && !reduceMotion) {
+            rememberInfiniteTransition(label = "breathe").animateFloat(1f, 1.07f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "s")
+        } else null
         FilledIconButton(
             onClick = onClick,
             colors = IconButtonDefaults.filledIconButtonColors(containerColor = color, contentColor = Color.White),
-            modifier = Modifier.size(50.dp),
+            modifier = Modifier.size(56.dp).graphicsLayer {
+                val s = scale?.value ?: 1f
+                scaleX = s
+                scaleY = s
+            },
         ) {
-            Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(24.dp))
+            Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(26.dp))
         }
-        Text(label, style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.8f), maxLines = 1, modifier = Modifier.padding(top = 3.dp))
     }
 }
 
+/** A soft wash of the caller's pastel colour behind everything (subtle, so text stays crisp). */
 @Composable
-private fun SilenceButton(onClick: () -> Unit) {
-    androidx.wear.compose.material3.CompactButton(
-        onClick = onClick,
-        icon = { Icon(painterResource(R.drawable.ic_silence), contentDescription = null, modifier = Modifier.size(16.dp)) },
-        label = { Text("Silence") },
-        colors = androidx.wear.compose.material3.ButtonDefaults.filledTonalButtonColors(),
-        modifier = Modifier.semantics { contentDescription = "Silence the watch. The iPhone keeps ringing." },
-    )
-}
-
-/** Initials (or a phone glyph) on the contact's colour, with slow ripples while ringing. */
-@Composable
-private fun Avatar(caller: Caller, ringing: Boolean, size: Dp = 50.dp) {
-    val reduceMotion = rememberReduceMotion()
-    val t = rememberInfiniteTransition(label = "ripple")
-    val phase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1_800, easing = LinearEasing), RepeatMode.Restart), label = "p")
+private fun CallerGlow(caller: Caller) {
     val key = caller.contact?.name ?: caller.name
-    val (color, ink) = if (caller.initials.isEmpty()) Color(0xFF3A3F46) to Color.White else io.wearbridge.watch.ui.theme.Avatars.colors(key)
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size + 12.dp)) {
-        if (ringing && !reduceMotion) {
-            for (offset in listOf(0f, 0.5f)) {
-                val p = (phase + offset) % 1f
-                Box(
-                    Modifier
-                        .size(size)
-                        .scale(1f + 0.24f * p)
-                        .alpha(0.45f * (1f - p))
-                        .background(color, CircleShape),
-                )
-            }
-        }
-        Box(Modifier.size(size).background(color, CircleShape), contentAlignment = Alignment.Center) {
-            if (caller.initials.isNotEmpty()) {
-                Text(caller.initials, style = MaterialTheme.typography.titleLarge, color = ink)
-            } else {
-                Icon(painterResource(R.drawable.ic_call), contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
-            }
-        }
+    val color = if (caller.initials.isEmpty()) Color(0xFF3A3F46) else io.wearbridge.watch.ui.theme.Avatars.colors(key).first
+    Canvas(Modifier.fillMaxSize()) {
+        drawRect(
+            androidx.compose.ui.graphics.Brush.radialGradient(
+                listOf(color.copy(alpha = 0.20f), Color.Transparent),
+                center = Offset(size.width / 2, size.height * 0.42f),
+                radius = size.minDimension * 0.55f,
+            ),
+        )
     }
 }
 
-/** Edge arc that fills toward the action as the bezel turns: green on the right for Answer, red on the left for Decline. */
+/** Edge arc that fills toward the action as the bezel turns: green at 3 o'clock for Answer, red at 9 for Decline. */
 @Composable
 private fun BezelArc(clicks: Int) {
     if (clicks == 0) return
@@ -338,7 +322,6 @@ private fun BezelArc(clicks: Int) {
         val inset = stroke / 2
         val arcSize = Size(size.width - stroke, size.height - stroke)
         val sweep = 100f * fraction
-        // Centred on 3 o'clock (0°) for Answer, 9 o'clock (180°) for Decline.
         val start = if (answer) -sweep / 2 else 180f - sweep / 2
         drawArc(
             color = if (answer) Green else Red,
@@ -352,6 +335,7 @@ private fun BezelArc(clicks: Int) {
     }
 }
 
+/** Connected: who, a big timer, where the audio is, and End as the edge button. */
 @Composable
 private fun ActiveScreen(state: CallUi.Active) {
     val haptics = LocalHapticFeedback.current
@@ -363,56 +347,59 @@ private fun ActiveScreen(state: CallUi.Active) {
             delay(1_000)
         }
     }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-        modifier = Modifier.fillMaxSize().background(Color.Black).padding(start = 24.dp, end = 24.dp, bottom = 14.dp),
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(6.dp).background(Green, CircleShape))
-            Spacer(Modifier.width(5.dp))
-            Text("On iPhone", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            // Leaves the bottom curve to the End edge button.
+            modifier = Modifier.fillMaxSize().padding(start = 26.dp, end = 26.dp, top = 6.dp, bottom = if (endLabel != null) 62.dp else 0.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).background(Green, CircleShape))
+                Spacer(Modifier.width(5.dp))
+                Text("On iPhone", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.7f))
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                state.caller.name,
+                style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                color = Color.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                duration(now - state.startedAtMillis),
+                style = MaterialTheme.typography.numeralSmall,
+                color = Color.White,
+                modifier = Modifier.semantics { contentDescription = "Call time ${duration(now - state.startedAtMillis)}" },
+            )
+            Text(
+                if (endLabel != null && shakeToEnd) "Audio on iPhone · shake to end" else "Audio on your iPhone",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.55f),
+                textAlign = TextAlign.Center,
+            )
+            if (endLabel == null) {
+                Text("End the call on your iPhone", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 6.dp))
+            }
         }
-        Spacer(Modifier.height(6.dp))
-        Avatar(state.caller, ringing = false, size = 40.dp)
-        Text(
-            state.caller.name,
-            style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
-            color = Color.White,
-            textAlign = TextAlign.Center,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            duration(now - state.startedAtMillis),
-            style = MaterialTheme.typography.displaySmall,
-            color = Green,
-            modifier = Modifier.semantics { contentDescription = "Call time ${duration(now - state.startedAtMillis)}" },
-        )
-        Text("Audio on your iPhone", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.55f))
-        Spacer(Modifier.height(8.dp))
         if (endLabel != null) {
-            FilledIconButton(
+            EdgeButton(
                 onClick = {
                     haptics.performHapticFeedback(HapticFeedbackType.Reject)
                     BridgeGraph.calls.end()
                 },
-                colors = IconButtonDefaults.filledIconButtonColors(containerColor = Red, contentColor = Color.White),
-                modifier = Modifier.size(width = 72.dp, height = 42.dp),
+                buttonSize = EdgeButtonSize.Small,
+                colors = ButtonDefaults.buttonColors(containerColor = Red, contentColor = Color.White),
+                modifier = Modifier.align(Alignment.BottomCenter),
             ) {
-                Icon(painterResource(R.drawable.ic_call_end), contentDescription = endLabel, modifier = Modifier.size(26.dp))
+                Icon(painterResource(R.drawable.ic_call_end), contentDescription = endLabel, modifier = Modifier.size(28.dp))
             }
-            if (shakeToEnd) {
-                Text("Or shake to end", style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.42f), modifier = Modifier.padding(top = 4.dp))
-            }
-        } else {
-            Text("End the call on your iPhone", style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.6f), textAlign = TextAlign.Center)
         }
     }
 }
 
-/** Between Answer and the connected call: the caller stays put, so the hand-over feels continuous. */
+/** Between Answer and the connected call: the caller stays put, with a spinning ring, so it feels continuous. */
 @Composable
 private fun AnsweringScreen(state: CallUi.Answering) {
     Column(
@@ -420,10 +407,14 @@ private fun AnsweringScreen(state: CallUi.Answering) {
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.fillMaxSize().background(Color.Black).padding(horizontal = 24.dp),
     ) {
-        Avatar(state.caller, ringing = false, size = 50.dp)
-        Spacer(Modifier.height(4.dp))
-        Text(state.caller.name, style = MaterialTheme.typography.titleMedium, color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text("Answering on iPhone…", style = MaterialTheme.typography.bodySmall, color = Green)
+        androidx.wear.compose.material3.CircularProgressIndicator(
+            modifier = Modifier.size(36.dp),
+            colors = androidx.wear.compose.material3.ProgressIndicatorDefaults.colors(indicatorColor = Green, trackColor = Color.Transparent),
+            strokeWidth = 3.dp,
+        )
+        Spacer(Modifier.height(10.dp))
+        Text(state.caller.name, style = MaterialTheme.typography.titleLarge, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        Text("Answering on iPhone…", style = MaterialTheme.typography.labelMedium, color = Green)
     }
 }
 
@@ -440,11 +431,13 @@ private fun EndedScreen(state: CallUi.Ended) {
         verticalArrangement = Arrangement.Center,
         modifier = Modifier.fillMaxSize().background(Color.Black).padding(horizontal = 24.dp),
     ) {
-        Icon(painterResource(R.drawable.ic_call_end), contentDescription = null, tint = color, modifier = Modifier.size(30.dp))
-        Spacer(Modifier.height(6.dp))
+        Box(Modifier.size(52.dp).background(color.copy(alpha = 0.16f), CircleShape), contentAlignment = Alignment.Center) {
+            Icon(painterResource(R.drawable.ic_call_end), contentDescription = null, tint = color, modifier = Modifier.size(26.dp))
+        }
+        Spacer(Modifier.height(8.dp))
         Text(title, style = MaterialTheme.typography.titleMedium, color = color, textAlign = TextAlign.Center)
         Text(state.caller.name, style = MaterialTheme.typography.bodySmall, color = Color.White.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis)
-        state.durationMillis?.let { Text(duration(it), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.6f)) }
+        state.durationMillis?.let { Text(duration(it), style = MaterialTheme.typography.numeralExtraSmall, color = Color.White.copy(alpha = 0.85f)) }
     }
 }
 

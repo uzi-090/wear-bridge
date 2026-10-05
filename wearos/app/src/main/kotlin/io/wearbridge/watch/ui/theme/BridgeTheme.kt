@@ -1,5 +1,10 @@
 package io.wearbridge.watch.ui.theme
 
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
@@ -12,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -272,4 +278,28 @@ fun LiveRing(
         strokeWidth = strokeWidth,
         colors = androidx.wear.compose.material3.ProgressIndicatorDefaults.colors(indicatorColor = color, trackColor = trackColor),
     )
+}
+
+/**
+ * Expanding rings behind a circle of [size] (ringing calls, Find iPhone). Compose it only while it should
+ * move: its animation clock exists only while it's in the tree, and values are read in the draw phase,
+ * so nothing recomposes per frame.
+ */
+@Composable
+fun Ripples(color: Color, size: Dp, spread: Float = 0.3f, maxAlpha: Float = 0.45f, periodMs: Int = 1_800) {
+    val phase = rememberInfiniteTransition(label = "ripples")
+        .animateFloat(0f, 1f, infiniteRepeatable(tween(periodMs, easing = LinearEasing)), label = "phase")
+    for (offset in listOf(0f, 0.5f)) {
+        Box(
+            Modifier
+                .size(size)
+                .graphicsLayer {
+                    val p = (phase.value + offset) % 1f
+                    scaleX = 1f + spread * p
+                    scaleY = scaleX
+                    alpha = maxAlpha * (1f - p)
+                }
+                .background(color, CircleShape),
+        )
+    }
 }

@@ -17,7 +17,26 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 + resource shrinking: Compose on a Watch4-class chip is markedly smoother optimized,
+            // and non-debuggable builds use the libraries' ahead-of-time (baseline) profiles.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Local installs only; a store build would use an upload key.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+        // Release-optimized but with the debug demo tools (fake data for screenshots and frame timing).
+        create("profiling") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+        }
+    }
+
+    sourceSets {
+        getByName("profiling") {
+            kotlin.directories += "src/debug/kotlin"
+            manifest.srcFile("src/debug/AndroidManifest.xml")
+            res.directories += "src/debug/res"
         }
     }
 
