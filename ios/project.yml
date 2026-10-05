@@ -1,0 +1,38 @@
+# Generate the Xcode project with:  cd ios && xcodegen
+name: Bridge
+options:
+  bundleIdPrefix: io.wearbridge
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Set your Apple Developer team ID here (or in Xcode → Signing & Capabilities) to run on a device.
+    DEVELOPMENT_TEAM: ""
+targets:
+  PairingPOC:
+    type: application
+    platform: iOS
+    sources:
+      - PairingPOC
+    info:
+      path: PairingPOC/Info.plist
+      properties:
+        CFBundleDisplayName: Bridge
+        CFBundleShortVersionString: "0.1.0"
+        CFBundleVersion: "1"
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIBackgroundModes:
+          - bluetooth-central
+        NSBluetoothAlwaysUsageDescription: >-
+          Bridge uses Bluetooth to connect directly to your watch, so it can show your iPhone's
+          notifications and calls. Nothing is sent to the internet.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.wearbridge.pairingpoc
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_STRICT_CONCURRENCY: complete
