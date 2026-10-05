@@ -36,6 +36,27 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
     @Synchronized
     fun isPosted(uid: Long): Boolean = uid in posted
 
+    private val badges = HashMap<String, android.graphics.Bitmap>()
+
+    /** The app's monogram badge (see [AppCatalog]). Rendered once per app and cached. */
+    private fun badge(app: io.wearbridge.watch.notifications.AppInfo): android.graphics.Bitmap = synchronized(badges) {
+        badges.getOrPut("${app.color}:${app.initial}") {
+            val size = 96
+            val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bmp)
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            paint.color = app.color.toInt()
+            canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+            paint.color = android.graphics.Color.WHITE
+            paint.textSize = size * 0.48f
+            paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            paint.textAlign = android.graphics.Paint.Align.CENTER
+            val y = size / 2f - (paint.descent() + paint.ascent()) / 2f
+            canvas.drawText(app.initial, size / 2f, y, paint)
+            bmp
+        }
+    }
+
     fun createChannels() {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannels(
@@ -75,7 +96,8 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
     fun show(n: WatchNotification, alert: Boolean) {
         if (!canPost) return
         val a = n.ancs
-        val body = listOf(a.subtitle, a.message).filter { it.isNotBlank() }.joinToString("\n")
+        val body = if (n.masked) MASKED_TEXT else listOf(a.subtitle, a.message).filter { it.isNotBlank() }.joinToString("\n")
+        val title = if (n.masked) n.appLabel else a.title.ifBlank { n.appLabel }
         // The channel (importance) follows iOS's own Silent flag and stays stable across updates.
         // [alert] only decides whether this particular post buzzes.
         val channel = when {
@@ -86,7 +108,8 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         }
         val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_bridge)
-            .setContentTitle(a.title.ifBlank { n.appLabel })
+            .setLargeIcon(badge(n.app))
+            .setContentTitle(title)
             .setContentText(body)
             .setSubText(n.appLabel)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
@@ -197,6 +220,7 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         const val CHANNEL_SERVICE = "service"
         const val SERVICE_NOTIFICATION_ID = 1
         private const val MAX_POSTED = 24
+        const val MASKED_TEXT = "Content hidden · tap to view"
         private const val TAG = "ios"
         private const val GROUP_PREFIX = "ios:"
     }

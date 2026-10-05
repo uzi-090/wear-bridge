@@ -14,9 +14,12 @@ data class WatchNotification(
     val receivedAtMillis: Long,
     /** True after a disconnect: iOS will replay it on reconnect, and until then its actions can't work. */
     val stale: Boolean = false,
+    /** Content hidden on the watch until the user reveals it (policy: finance apps, or per-app rule). */
+    val masked: Boolean = false,
 ) {
     val uid: Long get() = ancs.uid
-    val appLabel: String get() = ancs.appDisplayName ?: AppLabels.fallback(ancs.appIdentifier)
+    val app: AppInfo get() = AppCatalog.resolve(ancs.appIdentifier, ancs.appDisplayName, ancs.category)
+    val appLabel: String get() = app.name
     val isIncomingCall: Boolean get() = ancs.category == Category.INCOMING_CALL
     val isActiveCall: Boolean get() = ancs.category == Category.ACTIVE_CALL
     val hasActions: Boolean get() = ancs.positiveActionLabel != null || ancs.negativeActionLabel != null
@@ -98,25 +101,8 @@ class NotificationRepository {
     }
 }
 
-/** Fallback app labels for when iOS hasn't returned a display name yet. Keyed by bundle ID, never by name. */
+/** Last-resort label derived from the bundle ID, when neither iOS nor [AppCatalog] knows the app. */
 object AppLabels {
-    private val KNOWN = mapOf(
-        "com.apple.mobilephone" to "Phone",
-        "com.apple.MobileSMS" to "Messages",
-        "com.apple.mobilemail" to "Mail",
-        "com.apple.mobilecal" to "Calendar",
-        "com.apple.reminders" to "Reminders",
-        "com.apple.facetime" to "FaceTime",
-        "net.whatsapp.WhatsApp" to "WhatsApp",
-        "ph.telegra.Telegraph" to "Telegram",
-        "com.burbn.instagram" to "Instagram",
-        "com.google.Gmail" to "Gmail",
-        "com.tinyspeck.chatlyio" to "Slack",
-        "com.microsoft.skype.teams" to "Teams",
-        "com.hammerandchisel.discord" to "Discord",
-        "com.spotify.client" to "Spotify",
-    )
-
     fun fallback(bundleId: String?): String =
-        bundleId?.let { KNOWN[it] ?: it.substringAfterLast('.').replaceFirstChar(Char::uppercase) } ?: "iPhone"
+        bundleId?.substringAfterLast('.')?.replaceFirstChar(Char::uppercase) ?: "iPhone"
 }

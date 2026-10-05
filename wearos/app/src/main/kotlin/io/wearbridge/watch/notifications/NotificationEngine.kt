@@ -10,6 +10,7 @@ import io.wearbridge.ancs.NotificationSourceEvent
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
 import io.wearbridge.watch.settings.BridgeSettings
+import io.wearbridge.watch.settings.PolicyStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -24,6 +25,7 @@ class NotificationEngine(
     private val repository: NotificationRepository,
     private val notifier: MirrorNotifier,
     private val settings: BridgeSettings,
+    private val policy: PolicyStore,
     private val scope: CoroutineScope,
 ) : AncsSession.Listener {
 
@@ -79,26 +81,39 @@ class NotificationEngine(
             notification.copy(negativeActionLabel = null) // experimental End Call is off
         } else notification
 
-        val wn = WatchNotification(gated, receivedAtMillis = System.currentTimeMillis())
+        val app = AppCatalog.resolve(gated.appIdentifier, gated.appDisplayName, gated.category)
+        gated.appIdentifier?.let { id -> gated.appDisplayName?.let { policy.noteApp(id, it) } }
+        val decision = NotificationPolicy.decide(gated.category, event.isImportant, app.kind, policy.rule(gated.appIdentifier), policy.mode.value)
+        if (!decision.keep) {
+            // The user turned this app off: don't store, post or buzz. Drop anything already shown.
+            repository.remove(gated.uid)
+            notifier.cancel(gated.uid)
+            sourceArrival.remove(gated.uid)
+            DiagLog.i("notif FILTERED app=${gated.appIdentifier} uid=${Redact.uid(gated.uid)}")
+            return
+        }
+
+        val wn = WatchNotification(gated, receivedAtMillis = System.currentTimeMillis(), masked = decision.mask)
         repository.upsert(wn)
 
         // Reconnect grace: never buzz for replayed (pre-existing) notifications, and coalesce bursts.
         // A connected call is a state change the user just caused, not news, so it never buzzes.
         val elapsed = SystemClock.elapsedRealtime()
         val isNew = event.eventId == EventId.ADDED && !event.isPreExisting
-        val alert = !wn.isActiveCall && !event.isSilent && (isNew || wn.isIncomingCall && !event.isPreExisting) &&
+        val alert = decision.surface && decision.vibrate &&
+            !wn.isActiveCall && !event.isSilent && (isNew || wn.isIncomingCall && !event.isPreExisting) &&
             (wn.isIncomingCall || elapsed - lastAlertAt > ALERT_COALESCE_MS)
         if (alert) lastAlertAt = elapsed
 
         // Replayed notifications go to the in-app inbox only. Posting them all floods the watch and
         // Android's 50-per-app notification quota. A ringing call is the exception.
-        val surface = !event.isPreExisting || wn.isIncomingCall || notifier.isPosted(gated.uid)
-        if (surface) notifier.show(wn, alert)
+        val surface = decision.surface && (!event.isPreExisting || wn.isIncomingCall || notifier.isPosted(gated.uid))
+        if (surface) notifier.show(wn, alert) else notifier.cancel(gated.uid)
 
         val latency = sourceArrival.remove(gated.uid)?.let { elapsed - it }
         DiagLog.i(
             "notif ${event.eventId} app=${gated.appIdentifier} cat=${gated.category} " +
-                "uid=${Redact.uid(gated.uid)} alert=$alert latency=${latency ?: "?"}ms",
+                "uid=${Redact.uid(gated.uid)} alert=$alert surface=$surface masked=${decision.mask} latency=${latency ?: "?"}ms",
         )
     }
 
@@ -110,6 +125,7 @@ class NotificationEngine(
     }
 
     override fun onAppName(appIdentifier: String, displayName: String) {
+        policy.noteApp(appIdentifier, displayName)
         repository.updateAppName(appIdentifier, displayName)
         // Re-post visible notifications from this app so they show the proper name (silently).
         repository.items.value

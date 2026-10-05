@@ -1,10 +1,16 @@
 package io.wearbridge.watch.ui
 
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -54,14 +60,23 @@ fun NotificationListScreen(onOpen: (Long) -> Unit) {
 private fun NotificationCard(n: WatchNotification, onOpen: (Long) -> Unit) {
     TitleCard(
         onClick = { onOpen(n.uid) },
-        title = { Text(n.appLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppBadge(n.app, size = 18.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(n.appLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        },
         time = { Text(Copy.relative(n.timeMillis)) },
-        subtitle = if (n.ancs.title.isNotBlank()) {
+        subtitle = if (!n.masked && n.ancs.title.isNotBlank()) {
             { Text(n.ancs.title, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         } else null,
         modifier = Modifier.fillMaxWidth(),
     ) {
-        if (n.ancs.message.isNotBlank()) Text(n.ancs.message, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        when {
+            n.masked -> Text(Copy.MASKED, maxLines = 1)
+            n.ancs.message.isNotBlank() -> Text(n.ancs.message, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
     }
 }
 
@@ -73,6 +88,7 @@ fun NotificationDetailScreen(uid: Long) {
     val status by repo.actionStatus.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val listState = rememberTransformingLazyColumnState()
+    var revealed by remember(uid) { mutableStateOf(false) }
 
     ScreenScaffold(scrollState = listState) { padding ->
         TransformingLazyColumn(state = listState, contentPadding = padding) {
@@ -82,11 +98,26 @@ fun NotificationDetailScreen(uid: Long) {
                 return@TransformingLazyColumn
             }
             val a = current.ancs
-            item { ListHeader { Text("${current.appLabel} · ${Copy.relative(current.timeMillis)}") } }
-            if (a.title.isNotBlank()) item { Text(a.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.fillMaxWidth()) }
-            if (a.subtitle.isNotBlank()) item { Text(a.subtitle, style = MaterialTheme.typography.labelMedium, modifier = Modifier.fillMaxWidth()) }
-            if (a.message.isNotBlank()) item { Text(a.message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth()) }
-            if (a.isMessageTruncated) item { Caption(Copy.TRUNCATED) }
+            item {
+                ListHeader {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AppBadge(current.app, size = 22.dp)
+                        Spacer(Modifier.width(6.dp))
+                        Text("${current.appLabel} · ${Copy.relative(current.timeMillis)}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            if (current.masked && !revealed) {
+                item { Caption(Copy.MASKED_DETAIL) }
+                item {
+                    FilledTonalButton(onClick = { revealed = true }, modifier = Modifier.fillMaxWidth(), label = { Text("Show content") })
+                }
+            } else {
+                if (a.title.isNotBlank()) item { Text(a.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.fillMaxWidth()) }
+                if (a.subtitle.isNotBlank()) item { Text(a.subtitle, style = MaterialTheme.typography.labelMedium, modifier = Modifier.fillMaxWidth()) }
+                if (a.message.isNotBlank()) item { Text(a.message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth()) }
+                if (a.isMessageTruncated) item { Caption(Copy.TRUNCATED) }
+            }
 
             if (current.stale) {
                 item { Caption(Copy.STALE) }

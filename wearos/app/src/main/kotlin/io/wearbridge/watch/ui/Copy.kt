@@ -54,6 +54,8 @@ object Copy {
     const val STALE = "Reconnecting. Actions are paused."
     const val CLEARED = "This notification was cleared on your iPhone."
     const val TRUNCATED = "Continued on iPhone"
+    const val MASKED = "Content hidden"
+    const val MASKED_DETAIL = "Content is hidden on your watch for this app."
 
     private val TIME = DateTimeFormatter.ofPattern("H:mm")
     private val DAY = DateTimeFormatter.ofPattern("d MMM")

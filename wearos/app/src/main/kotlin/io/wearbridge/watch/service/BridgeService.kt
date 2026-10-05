@@ -49,7 +49,7 @@ class BridgeService : Service() {
         )
         BridgeGraph.notifier.clearOrphans()
         controller = ConnectionManager(applicationContext, BridgeGraph.repository) { scope ->
-            NotificationEngine(BridgeGraph.repository, BridgeGraph.notifier, BridgeGraph.settings, scope)
+            NotificationEngine(BridgeGraph.repository, BridgeGraph.notifier, BridgeGraph.settings, BridgeGraph.policy, scope)
         }.also {
             BridgeGraph.controller = it
             it.start()
