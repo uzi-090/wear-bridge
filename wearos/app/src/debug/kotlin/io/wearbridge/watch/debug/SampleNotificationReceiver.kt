@@ -40,7 +40,7 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             if (intent.getBooleanExtra("find_watch", false)) BridgeGraph.findWatch.start() else BridgeGraph.findWatch.stop(fromUser = true)
             return
         }
-        // `--es media VOLUME_UP` sends a real AMS command. `--ez fake_media true` shows fake Now Playing (demo mode).
+        // `--es media VOLUME_UP` sends a real AMS command. `--ez fake_media true` shows fake Now Playing (demo mode), `--ez no_media true` clears it.
         intent.getStringExtra("media")?.let { name ->
             io.wearbridge.ams.RemoteCommand.entries.firstOrNull { it.name == name }?.let(BridgeGraph::mediaCommand)
             return
@@ -86,6 +86,25 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             BridgeGraph.contacts.clear()
             return
         }
+        // `--es fake_link reconnecting|bt_off|error` previews the offline UI (demo mode); `restore` puts the real state back.
+        intent.getStringExtra("fake_link")?.takeIf { BridgeGraph.demoMode }?.let { which ->
+            if (which == "restore") {
+                realLink?.let { BridgeGraph.linkFlow.value = it }
+                realLink = null
+            } else {
+                if (realLink == null) realLink = BridgeGraph.link.value
+                BridgeGraph.linkFlow.value = when (which) {
+                    "bt_off" -> io.wearbridge.watch.ble.LinkSnapshot(io.wearbridge.watch.ble.LinkState.DISCONNECTED, io.wearbridge.watch.ble.LinkIssue.BLUETOOTH_OFF)
+                    "error" -> io.wearbridge.watch.ble.LinkSnapshot(io.wearbridge.watch.ble.LinkState.ERROR, io.wearbridge.watch.ble.LinkIssue.SETUP_FAILED)
+                    else -> io.wearbridge.watch.ble.LinkSnapshot(io.wearbridge.watch.ble.LinkState.RECONNECTING)
+                }
+            }
+            return
+        }
+        if (intent.getBooleanExtra("no_media", false) && BridgeGraph.demoMode) {
+            BridgeGraph.mediaFlow.value = null
+            return
+        }
         if (intent.getBooleanExtra("fake_media", false) && BridgeGraph.demoMode) {
             BridgeGraph.mediaFlow.value = io.wearbridge.ams.NowPlaying(
                 playerName = intent.getStringExtra("player") ?: "Music", state = io.wearbridge.ams.PlaybackState.PLAYING, rate = 1.0,
@@ -119,3 +138,6 @@ class SampleNotificationReceiver : BroadcastReceiver() {
         }
     }
 }
+
+/** The real link state while `fake_link` overrides it (receivers are created per broadcast, so it lives here). */
+private var realLink: io.wearbridge.watch.ble.LinkSnapshot? = null

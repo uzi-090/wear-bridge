@@ -40,7 +40,7 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
     private val badges = HashMap<String, android.graphics.Bitmap>()
 
     /** The app's monogram badge (see [AppCatalog]). Rendered once per app and cached. */
-    private fun badge(app: io.wearbridge.watch.notifications.AppInfo): android.graphics.Bitmap = synchronized(badges) {
+    internal fun badge(app: io.wearbridge.watch.notifications.AppInfo): android.graphics.Bitmap = synchronized(badges) {
         val storeIcon = io.wearbridge.watch.BridgeGraph.icons.bitmap(app.bundleId)
         badges.getOrPut("${app.bundleId}:${storeIcon?.generationId}:${app.color}:${app.logo ?: app.initial}") {
             val size = 96

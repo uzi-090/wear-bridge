@@ -3,7 +3,6 @@ package io.wearbridge.watch.tile
 import android.content.Context
 import androidx.wear.tiles.TileService
 import io.wearbridge.watch.BridgeGraph
-import io.wearbridge.watch.ble.LinkState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
@@ -15,8 +14,8 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /**
- * Asks Wear OS to refresh the tile when what it shows changes (link up/down, iPhone battery, alert count,
- * play state). Event-driven and debounced; Wear OS also rate-limits requests, so this never polls.
+ * Asks Wear OS to refresh the tile when what it shows changes (link state, iPhone battery, alert count,
+ * player, song and play state). Event-driven and debounced; Wear OS also rate-limits requests, so this never polls.
  */
 object TileRefresher {
     @OptIn(FlowPreview::class)
@@ -26,7 +25,10 @@ object TileRefresher {
             combine(
                 BridgeGraph.link, BridgeGraph.phoneBattery, BridgeGraph.repository.items, BridgeGraph.media, BridgeGraph.phoneCharging,
             ) { link, battery, items, media, charging ->
-                listOf(link.state == LinkState.READY, battery, items.size, media?.hasPlayer, media?.isPlaying, charging)
+                listOf(
+                    link.state, link.issue, battery, items.size, charging,
+                    media?.hasPlayer, media?.isPlaying, media?.playerName, media?.title,
+                )
             }
                 .distinctUntilChanged()
                 .drop(1)
