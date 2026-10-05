@@ -78,9 +78,11 @@ class AmsClient(
                 }
                 publish(state.apply(u, SystemClock.elapsedRealtime()))
                 if (u.truncated && u.attribute in FETCH_FULL[u.entity].orEmpty()) fetchFull(u.entity, u.attribute)
-                // A new track with no known player name: the app may have changed, so read the name again.
-                if (u.entity == EntityId.TRACK && u.attribute == TrackAttribute.TITLE && state.playerName.isBlank()) {
-                    fetchFull(EntityId.PLAYER, PlayerAttribute.NAME)
+                // A new track: iOS doesn't always send every attribute with it (seen on hardware: an Apple Music
+                // track arrived without its duration). Read the duration, and the player name if unknown.
+                if (u.entity == EntityId.TRACK && u.attribute == TrackAttribute.TITLE) {
+                    fetchFull(EntityId.TRACK, TrackAttribute.DURATION)
+                    if (state.playerName.isBlank()) fetchFull(EntityId.PLAYER, PlayerAttribute.NAME)
                 }
             }
             else -> return false

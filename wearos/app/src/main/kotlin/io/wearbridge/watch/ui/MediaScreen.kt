@@ -62,6 +62,7 @@ import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.R
 import io.wearbridge.watch.ble.LinkState
 import io.wearbridge.watch.notifications.AppCatalog
+import io.wearbridge.watch.notifications.AppInfo
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -82,22 +83,22 @@ fun MediaScreen() {
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val np = media
+    val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
+    val app = remember(np?.playerName, seen) { np?.takeIf { it.hasPlayer }?.let { AppCatalog.forPlayerName(it.playerName, seen) } }
 
     ScreenScaffold {
         when {
             np == null && link.state != LinkState.READY -> EmptyMedia("Not connected", "Connect to your iPhone to control what it's playing.")
             np == null -> EmptyMedia("Media unavailable", "Your iPhone isn't sharing media controls right now.")
-            !np.hasPlayer -> EmptyMedia("Nothing playing", "Start music or a podcast on your iPhone, then control it here.")
-            else -> Player(np)
+            !np.hasPlayer || app == null -> EmptyMedia("Nothing playing", "Start music or a podcast on your iPhone, then control it here.")
+            else -> Player(np, app)
         }
     }
 }
 
 @Composable
-private fun Player(np: NowPlaying) {
+private fun Player(np: NowPlaying, app: AppInfo) {
     val haptics = LocalHapticFeedback.current
-    val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
-    val app = remember(np.playerName, seen) { AppCatalog.forPlayerName(np.playerName, seen) }
     // Only a known app has a real brand colour; otherwise stay neutral rather than inventing one.
     val known = app.bundleId != null || app.logo != null
     val palette = remember(app.color, known) { if (known) MediaPalette.from(Color(app.color)) else MediaPalette.NEUTRAL }
@@ -140,13 +141,28 @@ private fun Player(np: NowPlaying) {
                 volumeChangedAt = SystemClock.elapsedRealtime()
             },
     ) {
-        // Equal weights above and below keep the controls exactly on the screen's centre line.
+        // The top region gets a little more room than the bottom (it holds the app, title and artist under
+        // the clock), which puts the controls just below the centre line, where the thumb rests.
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
             Box(
-                Modifier.weight(1f).fillMaxWidth().padding(start = 34.dp, end = 34.dp, bottom = 6.dp),
+                Modifier.weight(1.22f).fillMaxWidth().padding(start = 34.dp, end = 34.dp, bottom = 6.dp),
                 contentAlignment = Alignment.BottomCenter,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    // The playing app, at the top: its official icon when the iPhone has sent one.
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 3.dp)) {
+                        if (app.bundleId != null || app.logo != null) {
+                            AppBadge(app, size = 15.dp)
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(
+                            app.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(
                         np.title.ifBlank { "Unknown title" },
                         style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
@@ -177,7 +193,7 @@ private fun Player(np: NowPlaying) {
                 PlayPause(np, now, palette) { send(RemoteCommand.TOGGLE_PLAY_PAUSE) }
                 SkipButton(R.drawable.ic_skip_next, "Next", np.can(RemoteCommand.NEXT_TRACK)) { send(RemoteCommand.NEXT_TRACK) }
             }
-            Box(Modifier.weight(1f).fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.weight(0.78f).fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.TopCenter) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         when {
@@ -189,21 +205,6 @@ private fun Player(np: NowPlaying) {
                         color = if (showVolume) palette.accent else Color.White.copy(alpha = 0.6f),
                         maxLines = 1,
                     )
-                    Spacer(Modifier.height(4.dp))
-                    // The playing app: its official icon when the iPhone has sent one, else its logo or initial.
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (app.bundleId != null || app.logo != null) {
-                            AppBadge(app, size = 16.dp)
-                            Spacer(Modifier.width(5.dp))
-                        }
-                        Text(
-                            app.name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White.copy(alpha = 0.72f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
                 }
             }
         }
@@ -218,8 +219,11 @@ private fun Player(np: NowPlaying) {
 private fun PlayPause(np: NowPlaying, now: Long, palette: MediaPalette, onClick: () -> Unit) {
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(70.dp)) {
         val fraction = if (np.durationSeconds > 0) (np.positionSeconds(now) / np.durationSeconds).toFloat() else 0f
+        // Read through state: the indicator keeps the first lambda it gets, so a captured value would freeze
+        // the ring at whatever it showed first (found on hardware: stuck at 0 after a track without a duration).
+        val progress = androidx.compose.runtime.rememberUpdatedState(fraction)
         CircularProgressIndicator(
-            progress = { fraction },
+            progress = { progress.value },
             modifier = Modifier.fillMaxSize().semantics { contentDescription = "Track progress" },
             strokeWidth = 3.dp,
             colors = ProgressIndicatorDefaults.colors(indicatorColor = palette.accent, trackColor = palette.accent.copy(alpha = 0.22f)),
