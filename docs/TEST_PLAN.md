@@ -44,7 +44,7 @@
 | M1.14 | iPhone locked vs unlocked, for M1.6 | Record any difference in content (the *Show Previews* setting) | | |
 | M1.15 | Force-quit PairingPOC, then repeat M1.6 | Still works (ANCS doesn't need the app) | | |
 | M1.16 | Walk out of range for 1 minute and back | `RECONNECTING` → READY, **no buzz** for old notifications | App-restart variant ✔: the iPhone reconnected 0.23 s after advertising began, READY in 3.2–4.7 s. 16 replayed notifications were stored silently. **Found:** the replay costs about 0.6 s per notification (serial fetch), so new messages now jump the backlog (fix 2bcc283). Out-of-range walk: pending | partial |
-| M1.17 | Toggle watch Bluetooth off/on | "Bluetooth is off" → reconnects | **✘ → fixed (2026-10-05):** Off/on worked, and the iPhone reconnected 5 s after Bluetooth came back. But the watch **ignored the reconnection** (stuck on "Reconnecting…" while the iPhone said "Connected"): a Bluetooth toggle drops the link without a per-device disconnect callback, so the old device reference looked like a duplicate. Fixed: the reference is cleared when the server closes, and a central is always accepted while waiting. Re-test pending | ✘ (fix pending re-test) |
+| M1.17 | Toggle watch Bluetooth off/on | "Bluetooth is off" → reconnects | **✔ 2026-10-05 (after fix 9e3abae):** BT on → advertising in 0.2 s → iPhone reconnected after 7.2 s → **READY 10.8 s** after BT on. 5 WhatsApp messages afterwards in 85–193 ms. (The first attempt got stuck "Reconnecting": a stale device reference, now fixed) | ✔ |
 | M1.18 | Reboot the watch | The service restarts from boot and reconnects | | |
 | M1.19 | Reboot the iPhone (unlock once) | Reconnects. Record the time to READY | | |
 
