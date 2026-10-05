@@ -70,14 +70,15 @@ locked iPhone and iMessage are unverified. Run them before any release build.
 | M2.1 | Connect the watch | Log `iPhone services: …`, `ams ready`, `phone services battery=true deviceInfo=true` | **✔ 2026-10-05:** all present. AMS ready 1.5–3.7 s after READY (it waits behind the ANCS replay) | ✔ |
 | M2.2 | Watch home | "iPhone 16 Pro · NN%" | **✔** 81 % matched the iPhone | ✔ |
 | M2.3 | AMS volume up/down via debug hook | Command accepted | **✔** `media VOLUME_UP SENT` / `VOLUME_DOWN SENT` in ~20 ms, with no player active | ✔ |
-| M2.4 | Play music on the iPhone, open Now playing, use play/pause, next, previous, crown | iPhone reacts, title/artist/progress correct | Not run (needs music playing) | ⏸ |
-| M2.5 | iPhone app open → status | Watch battery, "Notifications On", "Last sync Just now" | iOS app subscribed to SETTINGS, EVENTS and DEVICE_STATUS (watch log); on-screen check pending | partial |
-| M2.6 | Watch → Find iPhone with the app in the foreground | Looping sound + "Found It" cover; Found It stops the watch's "Ringing" | Not run (watch ADB dropped mid-test) | ⏸ |
-| M2.7 | Same with the app in the background / locked | Alert with the 29.5 s sound | Not run | ⏸ |
-| M2.8 | Force-quit the iPhone app, then Find iPhone | Watch says "Can't reach the iPhone app" | Not run | ⏸ |
-| M2.9 | iPhone app → Find Watch | Alarm + vibration + Found it. Found it on the watch resets the iPhone button | Not run | ⏸ |
+| M2.4 | Play music on the iPhone, open Now playing, use play/pause, next, previous, bezel | iPhone reacts, title/artist/progress correct | **✔ 2026-10-05:** user confirmed track info; log shows TOGGLE_PLAY_PAUSE (iOS state flips ~0.5 s later), NEXT/PREVIOUS_TRACK and VOLUME_UP/DOWN all `SENT`; iOS listed 9 supported commands. Bezel: one click = one ±136 px event = one step | ✔ |
+| M2.5 | iPhone app open → status | Watch battery, "Notifications On", "Last sync Just now" | Sealed STATUS and SETTINGS delivered after the secure session (watch log); iPhone shows settings (13 apps in its log) | ✔ |
+| M2.6 | Watch → Find iPhone with the app in the foreground | Looping sound + "Found It" cover; Found It stops the watch's "Ringing" | **✔** iPhone rang; Found It reached the watch encrypted 14 s later (`control: found on iPhone`) | ✔ |
+| M2.7 | Same with the iPhone locked | Alert with the 29.5 s sound | **✔ after a fix:** first attempts showed nothing — notification permission had never been requested for users who paired before onboarding (`auth=notDetermined`). After Allow Alerts: event received 1.3 s after sending, alert + chime on the Lock Screen | ✔ |
+| M2.8 | Force-quit the iPhone app, then Find iPhone | Watch says "Can't reach the iPhone app" | **✔** iOS unsubscribed SETTINGS, EVENTS and STATUS at once; watch state `NO_APP` | ✔ |
+| M2.9 | iPhone app → Find Watch | Alarm + vibration + Found it | **✔** `control: find watch on=true`, rang, stopped from the watch after 30 s | ✔ |
 | M2.10 | iPhone app → Notifications → Keep history on, clear a message on the iPhone | It stays on the watch, dimmed, "Cleared on iPhone", for 24 h | Not run | ⏸ |
 | M2.11 | Delete a notification on the watch, toggle watch Bluetooth | It doesn't come back after the replay | Not run | ⏸ |
+| M2.13 | App-level pairing: install the security build on both | Watch asks "Allow iPhone app?" with the code the iPhone shows; after Allow, sealed traffic flows; a reinstall of the iPhone app reconnects without asking again | **✔ 2026-10-05:** approval → session in 11 s; reinstall → `session established` with no prompt. Stale frames from an old session were rejected by the iPhone, as designed | ✔ |
 | M2.12 | Onboarding on a fresh install | Bluetooth prompt only after step 2, live ✓ on step 4 | Not run | ⏸ |
 
 ## Later phases (integration matrix)
