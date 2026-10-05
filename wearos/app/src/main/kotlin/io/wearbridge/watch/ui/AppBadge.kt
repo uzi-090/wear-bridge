@@ -13,10 +13,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.Text
 import io.wearbridge.watch.notifications.AppInfo
 
-/** The app's monogram badge: its initial on its accent colour. Decorative, since the name is always shown next to it. */
+/** The app's badge: its logo (or initial) in white on its brand colour. Decorative, since the name is always shown next to it. */
 @Composable
 fun AppBadge(app: AppInfo, modifier: Modifier = Modifier, size: Dp = 20.dp) {
     Box(
@@ -26,12 +28,17 @@ fun AppBadge(app: AppInfo, modifier: Modifier = Modifier, size: Dp = 20.dp) {
             .clearAndSetSemantics { },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            app.initial,
-            color = Color.White,
-            fontWeight = FontWeight.Bold,
-            fontSize = (size.value * 0.5f).sp,
-            maxLines = 1,
-        )
+        val logo = AppLogos.drawable(app.logo)
+        if (logo != null) {
+            Icon(painterResource(logo), contentDescription = null, tint = Color.White, modifier = Modifier.size(size * 0.58f))
+        } else {
+            Text(
+                app.initial,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                fontSize = (size.value * 0.5f).sp,
+                maxLines = 1,
+            )
+        }
     }
 }

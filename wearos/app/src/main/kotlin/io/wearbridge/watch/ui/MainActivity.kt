@@ -22,6 +22,7 @@ class MainActivity : ComponentActivity() {
 
     private var hasPermissions by mutableStateOf(false)
     private var deepLinkUid by mutableStateOf<Long?>(null)
+    private var debugRoute by mutableStateOf<String?>(null)
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { refreshPermissions() }
@@ -35,6 +36,8 @@ class MainActivity : ComponentActivity() {
                     hasPermissions = hasPermissions,
                     deepLinkUid = deepLinkUid,
                     onDeepLinkConsumed = { deepLinkUid = null },
+                    debugRoute = debugRoute,
+                    onDebugRouteConsumed = { debugRoute = null },
                     onRequestPermissions = ::requestPermissions,
                 )
             }
@@ -63,6 +66,9 @@ class MainActivity : ComponentActivity() {
 
     private fun readDeepLink(intent: Intent?) {
         intent?.getLongExtra(EXTRA_UID, -1)?.takeIf { it >= 0 }?.let { deepLinkUid = it }
+        // Debuggable builds only: `am start ... --es route apps` opens a screen for UI checks.
+        val debuggable = applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+        if (debuggable) intent?.getStringExtra("route")?.let { debugRoute = it }
     }
 
     companion object {
@@ -75,6 +81,8 @@ private fun WatchApp(
     hasPermissions: Boolean,
     deepLinkUid: Long?,
     onDeepLinkConsumed: () -> Unit,
+    debugRoute: String?,
+    onDebugRouteConsumed: () -> Unit,
     onRequestPermissions: () -> Unit,
 ) {
     val nav = rememberSwipeDismissableNavController()
@@ -82,6 +90,12 @@ private fun WatchApp(
         if (deepLinkUid != null) {
             nav.navigate("notification/$deepLinkUid")
             onDeepLinkConsumed()
+        }
+    }
+    LaunchedEffect(debugRoute) {
+        if (debugRoute != null) {
+            nav.navigate(debugRoute)
+            onDebugRouteConsumed()
         }
     }
     AppScaffold {

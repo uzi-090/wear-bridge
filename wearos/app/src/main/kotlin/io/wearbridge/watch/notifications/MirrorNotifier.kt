@@ -40,13 +40,22 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
 
     /** The app's monogram badge (see [AppCatalog]). Rendered once per app and cached. */
     private fun badge(app: io.wearbridge.watch.notifications.AppInfo): android.graphics.Bitmap = synchronized(badges) {
-        badges.getOrPut("${app.color}:${app.initial}") {
+        badges.getOrPut("${app.color}:${app.logo ?: app.initial}") {
             val size = 96
             val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bmp)
             val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
             paint.color = app.color.toInt()
             canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+            val logo = io.wearbridge.watch.ui.AppLogos.drawable(app.logo)
+                ?.let { androidx.core.content.ContextCompat.getDrawable(context, it)?.mutate() }
+            if (logo != null) {
+                val inset = (size * 0.21f).toInt()
+                logo.setTint(android.graphics.Color.WHITE)
+                logo.setBounds(inset, inset, size - inset, size - inset)
+                logo.draw(canvas)
+                return@getOrPut bmp
+            }
             paint.color = android.graphics.Color.WHITE
             paint.textSize = size * 0.48f
             paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)

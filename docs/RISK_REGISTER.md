@@ -16,7 +16,7 @@ Likelihood / Impact: L / M / H. Status: **Open** until closed by a hardware resu
 | R-10 | Battery drain from advertising/GATT | M | H | Advertise only while disconnected in low-power mode. Event-driven, no polling. `BATTERY_BENCHMARKS.md` | Open |
 | R-11 | App Store rejection: trademarks ("Galaxy Watch" in the name), unclear purpose of background Bluetooth | M | M | Neutral name ("Bridge for Wear OS"), honest review notes, no misleading claims | Open |
 | R-12 | Play rejection: FGS declaration for `connectedDevice`, full-screen-intent use | M | M | Prepare the Play Console declarations and justify with the incoming-call use case | Open |
-| R-13 | Brand app icons bundled without permission | M | M | Ship neutral glyph/monogram icons by default. Curated logos only after a legal review | Open |
+| R-13 | Brand app logos bundled (user-requested, 2026-10-05: 16 Simple Icons logos, CC0 artwork, owners' trademarks) | M | M | Isolated in `logo_*.xml` + `AppLogos`. Monogram fallback is automatic. **Trademark review or removal required before any store release** (docs/THIRD_PARTY.md) | Open (accepted for personal builds) |
 | R-14 | Sensitive data leaking via logs/diagnostics | L | H | Single redaction chokepoint (`Redact`, `DiagLog`). Lint check later. No content in logs | Mitigated (by design) |
 | R-15 | Spoofing device pretends to be the watch to the iOS app | M | M | Bond-only (encrypted characteristics), then app-layer ECDH + AES-GCM with replay counters (Phase 10) | Open |
 | R-16 | Malicious nearby central connects to the watch | M | M | The watch only runs ANCS against bonded devices. Unknown centrals get no data. Future: allow-list of the bonded iPhone identity | Open |
