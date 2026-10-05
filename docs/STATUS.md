@@ -15,11 +15,11 @@ _Last updated: 2026-10-05, session 2._
 | 5 iOS companion | ✅ Rebuilt: onboarding, home (watch battery, notifications, last sync), Find Watch, Calls, Music & Media, Settings (pop-ups, history, End Call), Diagnostics, guide, About. Installed on the iPhone; the on-screen walk-through is pending (M2.5, M2.12) |
 | 9 Find phone / watch | ✅ **Verified**: Find iPhone (foreground, locked, force-quit = honest "can't reach") and Find watch |
 | 10 Security (app layer) | ✅ **Verified**: app-level pairing approved on the watch, every bridge message sealed (AES-GCM, replay-safe). Cross-platform test vectors from CryptoKit |
-| 6 Contacts | ✅ **Verified**: 957 contacts synced, encrypted on the watch; search, favorites. "Call from iPhone" built, test pending (M2.15) |
+| 6 Contacts | ✅ **Verified**: 957 contacts synced, encrypted on the watch; search, favorites. "Call from iPhone" verified (M2.15) |
 | 7 HFP research, 8 health, 11 store prep | ⏸ Not started |
 
 ## Next steps
-1. M2.15 (Call from iPhone), M2.10–M2.12.
+1. M2.10–M2.12 (history, delete survives replay, fresh onboarding).
 2. Run the open M1 reliability tests (reboots, out of range, locked iPhone) and M2.10–M2.12.
 3. iPhone diagnostics log: `xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer --domain-identifier io.wearbridge.pairingpoc --source Library/Caches/diagnostics.log --destination <file>`.
 
