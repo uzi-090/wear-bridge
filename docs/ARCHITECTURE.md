@@ -1,6 +1,7 @@
 # Architecture
 
-> Status: **Phase 1 (ANCS proof of concept)**. The sections marked *(planned)* are designs, not code.
+> Status: Phases 1–2 verified on hardware. Phase 4 (watch UI), media (AMS), device status and Find
+> iPhone/watch are implemented. The iPhone app is a full companion (Phase 5). Sections marked *(planned)* are designs.
 
 ## 1. Guiding decisions
 
@@ -59,6 +60,9 @@ wearos/
     AncsConstants, NotificationSourceEvent, AncsCommands (request encoders),
     DataSourceReassembler (fragmented responses), AncsSession (request queue, priorities,
     timeouts, actions), AncsNotification / AncsDate
+  ams/             Pure Kotlin/JVM: Apple Media Service (entity updates, remote commands,
+                   NowPlaying reducer with position extrapolation). Unit-tested.
+  protocol/        Pure Kotlin/JVM: bridge framing, SETTINGS messages, CONTROL/EVENTS/STATUS messages.
   app/
     ble/           ConnectionStateMachine (pure, unit-tested)
                    ConnectionManager   – orchestrator: runs state-machine effects, single inbox
@@ -66,13 +70,19 @@ wearos/
                    GattSession         – GATT client to iOS, GattOpQueue, callbacks
                    PairingManager      – LE bonding + timeout
                    ReconnectionManager – the single pending retry timer
+                   PhoneServicesClient – iPhone Battery Service + Device Information
     ancs/          AncsClient – drives AncsSession over a BluetoothGatt
+    media/         AmsClient – Now Playing + remote commands (started after ANCS is READY)
+    bridge/        SettingsChannel (rules, prefs, icons), DeviceChannel (CONTROL, EVENTS, DEVICE_STATUS)
+    find/          FindWatchAlert (alarm + vibration), Find iPhone / Find watch screens
     notifications/ NotificationEngine (policy: reconnect grace, coalescing, quota, action gating),
-                   NotificationRepository (StateFlows), MirrorNotifier (native Wear OS notifications)
-    settings/      BridgeSettings (subtle pop-ups, experimental End Call)
+                   NotificationRepository (StateFlows, conversation threads, watch-only delete,
+                   opt-in 24 h history), MirrorNotifier (native Wear OS notifications)
+    settings/      BridgeSettings (pop-up style, history, experimental End Call), PolicyStore, AppIconStore
     service/       BridgeService (foreground, connectedDevice), BootReceiver
     diagnostics/   DiagLog (redacted ring buffer), Redact
-    ui/            Compose for Wear OS: Home, Notifications, Call surface, Settings, Diagnostics
+    ui/            Compose for Wear OS: Home, Notifications (threads, detail), Now playing, Call surface,
+                   Settings, Diagnostics
 ```
 
 Mapping to the spec's suggested names: the watch is the LE *peripheral*, so there's no DeviceScanner.
@@ -137,18 +147,31 @@ peripheral topology replaces them with `ADVERTISING`. Retries use exponential ba
 Requests are strictly one-at-a-time. ANCS responses carry no request ID beyond the UID, so pipelining
 attribute requests makes reassembly ambiguous.
 
-## 6. iOS companion (Phase 1: PairingPOC only)
+## 6. iOS companion
 
-- SwiftUI + CoreBluetooth central, `bluetooth-central` background mode, state restoration ID.
-- Scans for the bridge service UUID → connects → reads the encrypted `PAIRING` characteristic → iOS
-  pairing prompt → bonded.
-- Plain-language status only. Diagnostics stay behind a disclosure.
-- *(planned)* AccessorySetupKit picker (iOS 18+), contacts/health sync, settings, find-phone.
+SwiftUI + Observation + CoreBluetooth, Swift 6 strict concurrency, no third-party code. Target
+`PairingPOC` (kept for the bundle ID), display name "Bridge".
 
-## 7. Custom bridge protocol *(planned, see `BLE_PROTOCOL.md`)*
+| File | Role |
+|---|---|
+| `WatchLink` | CoreBluetooth central: lazy start (after onboarding explains Bluetooth), state restoration, auto-reconnect, pairing-failure handling, all bridge channels |
+| `BridgeProtocol` | Framing + SETTINGS / CONTROL / EVENTS / STATUS codecs (mirrors `wearos/protocol`) |
+| `OnboardingView` | 6 steps: welcome, Bluetooth (then the iOS prompt), find + pair, Share System Notifications (live ✓ from the watch), what appears on the wrist, Find iPhone alert permission |
+| `HomeView` | Watch name, status pill, battery / notifications / last sync, then Notifications, Find Watch, Calls, Music & Media, Settings; Connection Guide, About |
+| `FeatureViews` | Find Watch, Calls (works / not available, experimental End Call), Media info, Settings, Diagnostics, guide, About |
+| `NotificationSettingsView` | Filter mode, pop-up style, history, per-app rules |
+| `FindMyPhone` | Foreground looping sound / background alert with a bundled sound |
+| `AppIconService` | Official icons from Apple's App Store lookup (bundle IDs only) |
+
+The iPhone app never reads notifications. If it's closed or deleted, notifications, calls, media and
+the iPhone battery still work, because those go straight from iOS to the watch.
+*(planned)* AccessorySetupKit picker, contacts and health.
+
+## 7. Custom bridge protocol (see `BLE_PROTOCOL.md`)
 Service `9C664C93-19F2-435D-895A-A40751731AE1`. Characteristics are derived by changing the 4th group
-(`…-895A-…` → `…-0001-…` etc., see `BridgeUuids`). Binary framing: version, type, seq, length, payload,
-AES-GCM tag with a session key from an ECDH (P-256) exchange authenticated by the LE bond.
+(`…-895A-…` → `…-0001-…` etc., see `BridgeUuids`). Implemented: PAIRING, CONTROL, EVENTS,
+DEVICE_STATUS, SETTINGS, with compact binary chunk framing. *(planned)* App-layer AES-GCM with
+ECDH session keys and replay counters (Phase 10, Risk R-22).
 
 ## 8. Persistence
 - Phase 1: in-memory only. Notifications are gone when the service dies. That's intentional, because it's minimal retention.
@@ -167,6 +190,7 @@ passed to it. It shows up on the watch under Diagnostics and in `adb logcat -s B
 | Wear | Compose for Wear OS Material3 1.7, foundation, navigation | UI |
 | Wear | AndroidX core, activity-compose, lifecycle | platform glue |
 | Wear | JUnit 4 (tests only) | tests |
+| Wear | Material Icons paths (5 media glyphs, copied as vector XML, Apache 2.0) | media controls |
 | iOS | SwiftUI, CoreBluetooth, Observation (system frameworks) | no third-party deps |
 | Tooling | XcodeGen (generates the .xcodeproj from `project.yml`) | reproducible project file |
 

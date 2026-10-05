@@ -25,3 +25,6 @@ Likelihood / Impact: L / M / H. Status: **Open** until closed by a hardware resu
 | R-19 | AccessoryNotifications stays EU-only, so no replies for this user | H | M | Honest "Reply isn't available" UX | Accepted |
 | R-20 | The ANCS date has no timezone, so travellers see skewed times | L | L | Interpret in the watch's zone (the same as the phone's in practice) | Accepted |
 | R-21 | Notification flood after reconnect (pre-existing replay) buzzes the user | H | M | Never vibrate on `PreExisting`. Coalesce haptics (≥ 1.5 s apart) | Mitigated (by design) |
+| R-22 | Another iOS app on the paired iPhone uses the bridge characteristics through the system-level bond | L | M | App-layer ECDH pairing + AES-GCM with replay counters (Phase 10, BLE_PROTOCOL.md). Bridge payloads carry rules and status, never notification content | Open |
+| R-23 | Find iPhone is silenced by the ring switch / Focus in the background | H | L | Time Sensitive needs a paid developer team (personal teams can't sign it, verified 2026-10-05). In the foreground the app plays through silent mode. Documented in the app's guide | Accepted (personal builds) |
+| R-24 | AMS setup competes with the ANCS replay for the single GATT queue | M | L | AMS starts after ANCS is READY. Measured 1.5–3.7 s to ready. Fresh notifications still jump the ANCS backlog | Mitigated |

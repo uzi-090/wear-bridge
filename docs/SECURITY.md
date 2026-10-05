@@ -22,6 +22,20 @@
 | Leakage via logs | Redaction chokepoint. `adb logcat` shows only bundle IDs, categories and latencies |
 | Data at rest | Phase 1 keeps notifications in memory only |
 
+## Session 2 additions
+| Area | Control |
+|---|---|
+| History | Off by default and in memory only. Never kept for hidden-content (banking/OTP) apps or calls. Turning it off deletes it at once |
+| Media | Track titles are personal data: `NowPlaying.toString()` is redacted and only state/counts are logged |
+| Watch status | Model, OS version, app version, battery, counts. No identifiers or content |
+| Find watch/iPhone | No content. The watch only rings when the bonded iPhone writes CONTROL |
+| Debug hooks | Debug builds only, behind the `DUMP` permission (adb shell). Demo mode blocks real content so screenshots can't capture it |
+
+**Known gap (R-22):** the bridge characteristics are protected by the LE bond, which belongs to the
+iPhone, not to the Bridge app. Another iOS app on the same iPhone could connect to the watch and use the
+bridge service (e.g. change notification rules or ring the watch). ANCS content isn't exposed through
+the bridge service. The fix is app-layer authentication (below).
+
 ## Planned (Phase 10)
 App-layer ECDH session keys, AES-GCM frames, replay counters, Keychain / Android Keystore storage,
 bonded-identity allow-list on the watch, and wiping on unpair.

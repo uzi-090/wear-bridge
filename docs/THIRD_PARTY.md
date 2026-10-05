@@ -14,6 +14,12 @@
 - **Not available in Simple Icons** (monogram fallback): Flipkart, Truecaller, Kotak 811, Rapido, Ola,
   ZEE5, EazyDiner, Lenskart, GeoGuessr, Slack, LinkedIn, Microsoft Teams/Outlook, FaceTime.
 
+## Media glyphs and sounds
+- `ic_play`, `ic_pause`, `ic_skip_next`, `ic_skip_previous`, `ic_volume_up`, `ic_volume_down`, `ic_music_note`:
+  Material Icons path data (Apache License 2.0), written as vector XML. Nothing downloaded.
+- `ios/PairingPOC/Resources/FindPhone.caf`: an original chime synthesized for this project (three sine
+  tones, 29.5 s, IMA4). No third-party audio.
+
 ## Generic glyphs
 - `glyph_phone.xml`, `glyph_hourglass.xml`: Material Icons ("call", "hourglass_full"), Apache License 2.0.
   Used for Apple system apps instead of Apple's logos.

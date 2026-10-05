@@ -4,12 +4,18 @@
 
 | Suite | Command | Covers | Status |
 |---|---|---|---|
-| ANCS protocol | `cd wearos && ./gradlew :ancs:test` | Notification Source parsing, command encoding, fragment reassembly (every split offset, 1-byte and MTU chunks), app attributes, dates, session queueing/priorities/timeouts/stale results, actions, reset | ✅ 33 passing |
-| Link state machine | `cd wearos && ./gradlew :app:testDebugUnitTest` | Happy path, pairing, auth-retry, backoff and cap, reconnect, BT off/on, duplicate/stale events, client rebuild, stop | ✅ 12 passing |
+| ANCS protocol | `cd wearos && ./gradlew :ancs:test` | Notification Source parsing, command encoding, fragment reassembly (every split offset, 1-byte and MTU chunks), app attributes, dates, session queueing/priorities/timeouts/stale results, actions, reset | ✅ 35 passing |
+| AMS protocol | `./gradlew :ams:test` | Entity updates (Unicode, truncation flag), registration and command encoding, supported-command parsing, playback info, position extrapolation and clamping, truncated-value refetch, log redaction | ✅ 8 passing |
+| Bridge protocol | `./gradlew :protocol:test` | Framing/reassembly, SETTINGS snapshot (Unicode, tri-state, v1.0/v1.1 prefs trailer), rules, icons, prefs, watch STATUS, switches, truncation | ✅ 14 passing |
+| Watch app logic | `./gradlew :app:testDebugUnitTest` | Link state machine (happy path, pairing, auth-retry, backoff and cap, reconnect, BT off/on, duplicate/stale events, client rebuild, stop); notification policy; repository (history on/off/expiry, never for hidden apps or calls, stale→history, watch-only delete survives replay, clear-all keeps calls, conversation threads) | ✅ 32 passing |
 | Watch build | `cd wearos && ./gradlew :app:assembleDebug :app:lintDebug` | Compiles, lint clean of errors | ✅ |
 | iOS build | `cd ios && xcodegen && xcodebuild -scheme PairingPOC -destination 'generic/platform=iOS Simulator' build` | Compiles under Swift 6 strict concurrency | ✅ |
 
-*Planned:* BLE frame codec / auth / replay tests (Phase 10), persistence and migration tests (once Room is added), contact sync diff tests (Phase 6).
+*Planned:* app-layer auth / replay tests (Phase 10), contact sync diff tests (Phase 6).
+
+**UI checks on hardware (fake data via the debug demo mode, 2026-10-05):** conversation cards, thread
+screen, delete (returns to the thread), Clear all confirmation, Arabic text aligned right, emoji and CJK
+wrapping, Now playing layout (edge progress ring, controls), home "iPhone 16 Pro · 81%".
 
 ## Milestone 1: hardware (iPhone 16 Pro + Galaxy Watch4 LTE)
 
@@ -56,6 +62,23 @@ Record firmware: One UI Watch version, Wear OS version, watch security patch, iO
 
 **Open risk carried into Phase 4:** watch reboot, iPhone reboot, out-of-range, force-quit iOS app,
 locked iPhone and iMessage are unverified. Run them before any release build.
+
+## Milestone 2: features added in session 2 (hardware)
+
+| # | Step | Expected | Observed | Pass |
+|---|---|---|---|---|
+| M2.1 | Connect the watch | Log `iPhone services: …`, `ams ready`, `phone services battery=true deviceInfo=true` | **✔ 2026-10-05:** all present. AMS ready 1.5–3.7 s after READY (it waits behind the ANCS replay) | ✔ |
+| M2.2 | Watch home | "iPhone 16 Pro · NN%" | **✔** 81 % matched the iPhone | ✔ |
+| M2.3 | AMS volume up/down via debug hook | Command accepted | **✔** `media VOLUME_UP SENT` / `VOLUME_DOWN SENT` in ~20 ms, with no player active | ✔ |
+| M2.4 | Play music on the iPhone, open Now playing, use play/pause, next, previous, crown | iPhone reacts, title/artist/progress correct | Not run (needs music playing) | ⏸ |
+| M2.5 | iPhone app open → status | Watch battery, "Notifications On", "Last sync Just now" | iOS app subscribed to SETTINGS, EVENTS and DEVICE_STATUS (watch log); on-screen check pending | partial |
+| M2.6 | Watch → Find iPhone with the app in the foreground | Looping sound + "Found It" cover; Found It stops the watch's "Ringing" | Not run (watch ADB dropped mid-test) | ⏸ |
+| M2.7 | Same with the app in the background / locked | Alert with the 29.5 s sound | Not run | ⏸ |
+| M2.8 | Force-quit the iPhone app, then Find iPhone | Watch says "Can't reach the iPhone app" | Not run | ⏸ |
+| M2.9 | iPhone app → Find Watch | Alarm + vibration + Found it. Found it on the watch resets the iPhone button | Not run | ⏸ |
+| M2.10 | iPhone app → Notifications → Keep history on, clear a message on the iPhone | It stays on the watch, dimmed, "Cleared on iPhone", for 24 h | Not run | ⏸ |
+| M2.11 | Delete a notification on the watch, toggle watch Bluetooth | It doesn't come back after the replay | Not run | ⏸ |
+| M2.12 | Onboarding on a fresh install | Bluetooth prompt only after step 2, live ✓ on step 4 | Not run | ⏸ |
 
 ## Later phases (integration matrix)
 iPhone locked/unlocked × iOS app foreground/background/force-quit × watch screen on/off/charging ×

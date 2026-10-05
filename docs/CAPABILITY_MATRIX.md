@@ -1,9 +1,10 @@
 # Capability Matrix
 
-> **Status of this document:** Phase 0, a research-based assessment. **Nothing here has been verified on
-> hardware yet.** Every row has a `HW` column that changes from `—` to `✔` (or `✘`) only after it has
-> been demonstrated on an iPhone 16 Pro + Galaxy Watch4 LTE (One UI 8 Watch / Wear OS 6). Rows marked
-> *verify* are plausible from the specs and community experience, but the exact behaviour is undocumented.
+> **Status of this document:** started as the Phase 0 research assessment and is updated with hardware
+> results. A row's `HW` column changes from `—` to `✔` (or `✘`) only after it has been demonstrated on an
+> iPhone 16 Pro + Galaxy Watch4 Classic LTE (One UI 8 Watch / Wear OS 6). "Implemented" without ✔ means
+> built and unit-tested, with the hardware test still pending (TEST_PLAN.md §M2). Rows marked *verify*
+> are plausible from the specs, but the exact behaviour is undocumented.
 >
 > Target user region: **India (non-EU)**. Apple's EU-only *AccessoryNotifications* framework is therefore
 > listed as unavailable everywhere it would otherwise help.
@@ -55,13 +56,14 @@ Google Play review risk (L/M/H).
 | App icon | 🟡 LIMITED (**verified**) | iOS app → B → W | iOS can't read other apps' icons (**NOT POSSIBLE WITH CURRENT PUBLIC API**). **Implemented:** the iPhone app looks up each app that has notified the watch on **Apple's public App Store lookup** (`itunes.apple.com/lookup?bundleId=`, the user's region, then the US), downloads the official icon, resizes it to a 96 px JPEG (3–5 KB), caches it, and sends it over the SETTINGS channel (`SET_APP_ICON`). Watch priority: App Store icon → bundled Simple Icons logo → monogram. Apple's built-in apps aren't in the store, so they get generic glyphs | Network (iPhone) | iOS app running when a new app appears | L | H | **M** | **M** | ✔ (5 apps: Airtel, Google Chat, Flipkart, GeoGuessr, WhatsApp) | **Network use:** sends only bundle IDs, only to Apple (user chose "always on"). App icons are their owners' trademarks: review before store release (R-13). |
 | Timestamp | 🟡 LIMITED | A | ANCS attr `Date` (`yyyyMMdd'T'HHmmSS`) | | | L | H | L | L | — | Local time with **no timezone**. We interpret it in the watch's zone, which is the same zone in practice. |
 | Category | ✅ FULL | A | ANCS `CategoryID` (Other, IncomingCall, MissedCall, Voicemail, Social, Schedule, Email, News, Health, Business, Location, Entertainment) | | | L | H | L | L | — | Assigned by iOS and coarse. |
-| Grouping | 🟡 LIMITED | A + W | No thread ID in ANCS | — | — | L | M | L | L | — | Watch-side heuristic: group by app, then by title (sender/chat). |
+| Grouping | 🟡 LIMITED (implemented) | A + W | No thread ID in ANCS | — | — | L | M | L | L | ✔ (fake data) | Watch inbox groups by app + title (iOS puts the sender or chat name in the title). One card per conversation with "+N more", and a thread screen. Hidden-content apps group by app only. |
 | Notification updates | ✅ FULL | A | EventID `Modified` | | | L | H | L | L | — | Re-fetch attributes, update in place, no repeat haptic. |
 | Notification removal (iPhone → watch) | ✅ FULL | A | EventID `Removed` | | | L | H | L | L | — | When the user clears it on the iPhone, it disappears from the watch. |
-| Dismissal (watch → iPhone) | 🟡 LIMITED | A | *Perform Notification Action* `Negative`, when the `NegativeAction` flag is set (label is typically "Clear") | | | L | H | L | L | — | Only when iOS advertises a negative action. Otherwise the dismissal is watch-local and we say so. |
+| Dismissal (watch → iPhone) | 🟡 LIMITED | A | *Perform Notification Action* `Negative`, when the `NegativeAction` flag is set (label is typically "Clear") | | | L | H | L | L | — | Only when iOS advertises a negative action. |
+| Delete from watch / Clear all | ✅ FULL (implemented) | W | Watch-local. Deleted UIDs are remembered for the process, so iOS's reconnect replay doesn't bring them back | — | — | L | H | L | L | ✔ (fake data) | The UI says "Stays on your iPhone". Calls in progress are never cleared. |
 | Notification actions | 🟡 LIMITED | A | ANCS Positive/Negative actions + iOS-supplied labels | | | L | H | L | L | — | **At most two actions**, and the labels come from iOS. App-defined actions (Reply, Like, Mark as Read) are **not** exposed. |
 | Pop-up presentation | 🟡 LIMITED (**verified**) | W | **One UI Watch's system UI picks the style by what's in front, and an app can't choose it.** Measured 2026-10-05: watch face in front → **full-screen pop-up**, even with the screen on. An app in front → **small top pop-up** (`w_noti_popup_small`, about 3 s). Screen off → full-screen (on wrist raise, or immediately with Samsung's "Turn on screen"). Off-body → none. Anything that vibrates gets a pop-up, whatever its importance. **NOT POSSIBLE WITH CURRENT PUBLIC API:** a small banner over the watch face. Waking the screen first was tried and still gave full-screen (it lands on the watch face), so it was removed along with its permissions. **Options:** *Standard* (Samsung default) or *Subtle* (posted silently, so no pop-up, and Bridge vibrates the watch itself) | — | — | L | H | L | L | ✔ | A custom banner would need a full-screen-intent activity: Play restricts FSI to calls/alarms (high Play risk), so not pursued. **Duration (measured):** Samsung decides this too. A pop-up that woke the screen uses a fixed `setCustomTimeout 7000` (7 s). With the screen already on, it lasts until the watch screen timeout (15 s on the test watch). Apps can't close another app's pop-up or turn the screen off. User options: shorter screen timeout, palm-to-cover, swipe, or Subtle. |
-| History | ✅ FULL | W | Room (opt-in), in-memory by default | — | — | L | H | L | L | — | Minimal retention, can be turned off. |
+| History | ✅ FULL (implemented) | W | In memory only. **Off by default**: the inbox mirrors what's on the iPhone now. "Keep history" (set from the iPhone app or watch) keeps notifications for 24 h after iOS clears them | — | — | L | H | L | L | — | Never kept: hidden-content apps (banking/OTP) and calls in progress. Turning it off deletes the history at once. Nothing is written to disk. |
 | Filtering | ✅ FULL (implemented) | W | `NotificationPolicy`: modes All / Important only / Messages & calls / Calls only, plus per-app on/off and vibrate (`PolicyStore`, local) | — | — | L | H | L | L | — | Filtered notifications stay in the inbox quietly. A disabled app is dropped entirely. |
 | Sensitive redaction | ✅ FULL (implemented) | W | Per-app "Hide content". Finance apps (catalog kind or iOS Business & Finance category) are hidden by default. Calls are never masked | — | — | L | H | L | L | — | The posted notification shows only the app name. Content appears only in Bridge after "Show content". OTP apps aren't distinguishable by category: they need a per-app rule. |
 | Previews / iOS "Show Previews" setting | 🧪 EXPERIMENTAL | A | iOS behaviour undocumented | | | — | — | — | — | — | *Verify* whether "Show Previews: When Unlocked/Never" blanks the ANCS `Message`. |
@@ -127,16 +129,21 @@ Google Play review risk (L/M/H).
 
 ## 5. Device
 
+> Verified 2026-10-05: iOS exposes **Battery Service 0x180F** and **Device Information 0x180A** to the
+> bonded watch, so the iPhone's battery and model need no iPhone app.
+
 | Capability | Status | Path | API | Notes |
 |---|---|---|---|---|
-| iPhone battery % | 🟡 LIMITED | S, fallback B | Battery Service 0x180F (*verify iOS exposes it*), else `UIDevice.batteryLevel` over the bridge | |
-| iPhone charging state | 🟠 BEST EFFORT | B | `UIDevice.batteryState` | Needs the app alive. |
-| Watch battery / charging | ✅ FULL | W → B | `BatteryManager` | Shown on iPhone. |
+| iPhone battery % | ✅ FULL (**verified**) | S | Battery Service 0x180F: read at connect, then notified by iOS on change | Watch home: "iPhone 16 Pro · 81%". |
+| iPhone model | ✅ FULL (**verified**) | S | Device Information Model Number (`iPhone17,1`) mapped to a marketing name | |
+| iPhone charging state | ⛔ NOT POSSIBLE (without the app) / 🟠 BEST EFFORT | B | Battery Service carries only the level. `UIDevice.batteryState` needs the iPhone app alive | Not implemented: level only. |
+| Watch battery / charging | ✅ FULL (implemented) | W → B | Sticky `ACTION_BATTERY_CHANGED` → DEVICE_STATUS push (debounced, no polling) | iPhone home: battery, charging, notifications on/off, last sync. |
 | Connection status | ✅ FULL | W, B | GATT callbacks / CoreBluetooth | |
 | Signal strength (watch LTE) | ✅ FULL | W | `TelephonyManager.getSignalStrength()` | |
 | Signal strength (iPhone cellular) | ⛔ NOT POSSIBLE | — | No public iOS API | Hidden from the UI. |
-| Find phone | 🟠 BEST EFFORT | B | Watch → bridge write → iOS app woken (bluetooth-central) → local notification with sound (+ Time-Sensitive) | Fails if the app was **force-quit**. Ringer switch / Focus may silence it. Critical Alerts need an Apple entitlement (unlikely to be granted). |
-| Watch → phone command channel | 🟡 LIMITED | B | Bridge GATT | Only while the iOS app is alive/relaunchable. |
+| Find phone | 🟠 BEST EFFORT (implemented) | B | Watch → EVENTS notify → iOS app woken (bluetooth-central). Foreground: looping in-app sound (plays even on silent) + full-screen "Found It". Background: local notification with a bundled 29.5 s sound | Fails if the app was **force-quit** (the watch then says "Can't reach the iPhone app"). In the background the ring switch and Focus apply. Time Sensitive needs a **paid** developer team (personal teams can't sign it, verified). Critical Alerts need an Apple entitlement (unlikely). |
+| Find watch (iPhone → watch) | ✅ FULL while connected (implemented) | B | CONTROL write → watch alarm sound + vibration + "Found it", 60 s cap | Needs the iPhone app open and the watch connected. |
+| Watch → phone command channel | 🟡 LIMITED (implemented) | B | EVENTS characteristic | Only while the iOS app is alive/relaunchable. |
 | Automatic reconnection | 🟡 LIMITED | A, B | Watch advertises (low power) while disconnected. iOS reconnects bonded ANCS consumers. iOS app keeps a pending `connect()` | *Verify* iOS system-level reconnect timing. |
 | Reconnect after watch reboot | 🟡 LIMITED | W | `BOOT_COMPLETED` → FGS `connectedDevice` (allowed from boot) | |
 | Reconnect after iPhone reboot | 🟡 LIMITED | A | ANCS resumes after first unlock (*verify*). Bridge resumes when iOS relaunches the app or the user opens it | |
@@ -164,10 +171,11 @@ Google Play review risk (L/M/H).
 
 | Capability | Status | Path | API | Notes |
 |---|---|---|---|---|
-| Play/pause, next/previous | ✅ FULL (*verify*) | M | AMS Remote Command | Works for any app using `MPNowPlayingInfoCenter`, including Apple Music and Spotify. The iOS app isn't needed. |
-| Volume | ✅ FULL (*verify*) | M | AMS `VolumeUp/Down` (relative) + player volume attribute | |
-| Now-playing metadata | ✅ FULL (*verify*) | M | AMS Entity Update: Player name, Track title/artist/album/duration, playback info | Artwork isn't available. |
-| Apple Music / Spotify | ✅ FULL (*verify*) | M | as above | |
+| AMS availability | ✅ FULL (**verified**) | M | Service present, notifications and attribute registration succeed after ANCS is READY | Started after ANCS. Failure never affects notifications. |
+| Play/pause, next/previous | ✅ FULL (implemented) | M | AMS Remote Command, gated by iOS's supported-command list | Works for any app using `MPNowPlayingInfoCenter`, including Apple Music and Spotify. The iOS app isn't needed. Live-player test: M2.4. |
+| Volume | ✅ FULL (**verified** command path) | M | AMS `VolumeUp/Down` (relative), crown/bezel on the Now playing screen, plus the player volume attribute for the level indicator | Commands accepted in ~20 ms. |
+| Now-playing metadata | ✅ FULL (implemented) | M | AMS Entity Update: Player name, Track title/artist/album/duration, playback info. Truncated values re-read via Entity Attribute | Artwork isn't available (**NOT POSSIBLE WITH CURRENT PUBLIC API**). Progress shown as an edge ring, extrapolated locally. |
+| Apple Music / Spotify | ✅ FULL (implemented) | M | as above | |
 
 ## 8. Other
 

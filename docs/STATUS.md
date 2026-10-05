@@ -1,6 +1,6 @@
 # Status & handoff
 
-_Last updated: 2026-10-05, end of session 1._
+_Last updated: 2026-10-05, session 2._
 
 ## Where things stand
 | Phase | State |
@@ -8,10 +8,19 @@ _Last updated: 2026-10-05, end of session 1._
 | 0 Feasibility docs | ✅ Capability matrix, architecture, risk register, ANCS, protocol, security, call audio, test plan |
 | 1 ANCS PoC | ✅ **Verified on hardware**: pairing, notifications (WhatsApp 64–194 ms, iMessage 113 ms), app name, timestamp |
 | 2 Actions / calls | ✅ Answer (167 ms) / Decline (115 ms) from the watch. **End Call** via undocumented ANCS category 12 (experimental setting, off by default). Call audio stays on the iPhone (expected) |
-| 3 Reconnection | 🟡 App restart ✅, BT toggle ✅ (after fix 9e3abae). **Not run:** watch reboot, iPhone reboot, out-of-range walk, force-quit iOS app, locked iPhone (see TEST_PLAN.md) |
-| 4 Watch notification UI | 🟡 In progress: logos/icons ✅, filtering ✅, masking ✅, pop-up styles (Standard/Subtle) ✅. **Next:** inbox delete/clear-all, history on/off, chat grouping, large-text/RTL check |
-| 5 iOS companion | 🟡 PairingPOC + **Notifications settings screen** (per-app rules over the SETTINGS channel) + App Store icon fetching |
-| 6+ Contacts, HFP research, health, find phone, hardening, store prep | ⏸ Not started |
+| 3 Reconnection | 🟡 App restart ✅, BT toggle ✅. **Not run:** watch reboot, iPhone reboot, out-of-range walk, force-quit iOS app, locked iPhone (TEST_PLAN.md M1) |
+| 4 Watch notification UI | ✅ Logos/icons, filtering, masking, pop-up styles, **conversation grouping, watch-only delete / clear all, opt-in 24 h history, RTL-aware text** (checked on hardware with fake data) |
+| Media (AMS) | ✅ Implemented: Now playing screen, controls, crown volume. AMS present and volume commands verified. Live-player test pending (M2.4) |
+| iPhone battery / model | ✅ **Verified**: Battery Service + Device Information read straight from iOS |
+| 5 iOS companion | ✅ Rebuilt: onboarding, home (watch battery, notifications, last sync), Find Watch, Calls, Music & Media, Settings (pop-ups, history, End Call), Diagnostics, guide, About. Installed on the iPhone; the on-screen walk-through is pending (M2.5, M2.12) |
+| 9 Find phone / watch | 🟡 Implemented both ways. Hardware tests pending (M2.6–M2.9): the watch's wireless ADB dropped mid-test |
+| 6 Contacts, 7 HFP research, 8 health, 10 hardening, 11 store prep | ⏸ Not started (next: 10 app-layer auth, R-22) |
+
+## Next steps
+1. Run TEST_PLAN M2.4–M2.12 (needs the watch on ADB, music on the iPhone, and someone to tap the iPhone).
+2. Run the open M1 reliability tests (reboots, out of range, force-quit, locked iPhone).
+3. Phase 10: app-layer ECDH pairing + AES-GCM + replay counters for the bridge service (R-22).
+4. Phase 6 contacts (encrypted, incremental) once Phase 10 is in, since contacts are sensitive.
 
 ## Key hardware findings (details in CAPABILITY_MATRIX / ANCS / TEST_PLAN)
 - iOS Settings doesn't list the watch, so pairing goes through the iPhone app. A stale half-bond needs *Forget This Device*.
@@ -19,6 +28,10 @@ _Last updated: 2026-10-05, end of session 1._
 - Android's 50-notifications-per-app quota is real. Posted mirrors are capped at 24.
 - One UI Watch picks the pop-up style: **full screen over the watch face, a small banner only inside an app**. Off-body → no pop-up or vibration. Pop-up duration is 7 s (it woke the screen) or the screen timeout. No app API changes any of this.
 - `USE_FULL_SCREEN_INTENT` is denied by default on Wear OS 6, so calls use a heads-up notification, and Answer opens the call screen via an activity PendingIntent.
+
+- **Session 2:** iOS exposes `DeviceInfo, Battery, CurrentTime, ANCS, AMS` (+ Continuity, Nearby and two
+  unidentified Apple services) to the bonded watch. AMS answers commands even with no player active.
+- Personal (free) Apple teams **can't sign** the Time Sensitive notifications entitlement.
 
 ## User decisions (session 1)
 - India region, so no AccessoryNotifications. Text reply = NOT POSSIBLE.
@@ -34,5 +47,11 @@ See `README.md` for build commands.
   Wireless ADB drops when the watch is off the charger.
 - Xcode: use `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer` (xcode-select still points at CLT). Team `""`.
   The project is generated: `cd ios && xcodegen`.
-- Debug-only helpers (watch): `am broadcast -a io.wearbridge.watch.debug.SAMPLE -p io.wearbridge.watch [--el uid N --es style FULL|SUBTLE]`
-  posts a fake notification. `am start -n io.wearbridge.watch/.ui.MainActivity --es route <route>` opens a screen.
+- Debug-only helpers (watch): `am broadcast -a io.wearbridge.watch.debug.SAMPLE -p io.wearbridge.watch [extras]`.
+  Extras: `--el uid N --es title/text/app/name … --el ago MIN --ez quiet true --ez cleared true` (fake notifications),
+  `--ez demo true` (**demo mode**: clears the inbox and ignores real notifications until `am force-stop`, so
+  screenshots only show fake content), `--ez fake_media true` (fake Now playing, demo mode only),
+  `--es media VOLUME_UP` (real AMS command), `--ez find_phone true|false`, `--ez find_watch true|false`.
+  The remote shell splits words, so quote values (see `printf %q`).
+  `am start -n io.wearbridge.watch/.ui.MainActivity --es route <route>` opens a screen
+  (`notifications`, `thread/<uid>`, `notification/<uid>`, `media`, `find`, `settings`, `diagnostics`).
