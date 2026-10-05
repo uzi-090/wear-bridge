@@ -21,6 +21,9 @@ fun SettingsScreen() {
     val popup by settings.popupStyle.collectAsStateWithLifecycle()
     val endCall by settings.endCallFromWatch.collectAsStateWithLifecycle()
     val history by settings.history.collectAsStateWithLifecycle()
+    val shakeDecline by settings.shakeToDecline.collectAsStateWithLifecycle()
+    val shakeEnd by settings.shakeToEnd.collectAsStateWithLifecycle()
+    val bezel by settings.bezelToAnswer.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
 
     ScreenScaffold(scrollState = listState) { padding ->
@@ -44,6 +47,30 @@ fun SettingsScreen() {
                     secondaryLabel = { Text("Keep notifications for 24 hours after you clear them on iPhone. Never for hidden apps.") },
                 )
             }
+            item { ListHeader { Text("Calls") } }
+            item {
+                SwitchButton(
+                    checked = bezel, onCheckedChange = settings::setBezelToAnswer, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Bezel to answer") },
+                    secondaryLabel = { Text("3 clicks clockwise answers, anticlockwise declines") },
+                )
+            }
+            item {
+                SwitchButton(
+                    checked = shakeDecline, onCheckedChange = settings::setShakeToDecline, modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Shake to decline") },
+                    secondaryLabel = { Text("A firm shake while a call rings") },
+                )
+            }
+            item {
+                SwitchButton(
+                    checked = shakeEnd, onCheckedChange = settings::setShakeToEnd, modifier = Modifier.fillMaxWidth(),
+                    enabled = endCall,
+                    label = { Text("Shake to end") },
+                    secondaryLabel = { Text(if (endCall) "Ends a connected call" else "Needs End calls from watch") },
+                )
+            }
+            item { Caption("Silence stops the watch only. iOS doesn't let accessories silence the iPhone.") }
             item { ListHeader { Text("Security") } }
             item {
                 FilledTonalButton(

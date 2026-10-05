@@ -58,6 +58,30 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             BridgeGraph.contacts.commit(fake.associateBy { it.id }, generation = io.wearbridge.watch.contacts.ContactsStore.DEMO_GENERATION)
             return
         }
+        // Demo mode only: `--ez fake_call true` (ringing), `--ez fake_active true` (connected), `--ez fake_hangup true`.
+        if (BridgeGraph.demoMode && (intent.hasExtra("fake_call") || intent.hasExtra("fake_active") || intent.hasExtra("fake_hangup"))) {
+            val repo = BridgeGraph.repository
+            fun call(uid: Long, cat: Category, pos: String?, neg: String?) = WatchNotification(
+                AncsNotification(uid, cat, 0x1A, "com.apple.mobilephone", "Phone", intent.getStringExtra("title") ?: "Alex Sample",
+                    intent.getStringExtra("text") ?: "mobile", "", null, LocalDateTime.now(), pos, neg),
+                System.currentTimeMillis(),
+            )
+            when {
+                intent.getBooleanExtra("fake_call", false) -> {
+                    repo.upsert(call(990_001, Category.INCOMING_CALL, "Answer", "Decline"))
+                    context.startActivity(
+                        android.content.Intent(context, io.wearbridge.watch.ui.IncomingCallActivity::class.java)
+                            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                }
+                intent.getBooleanExtra("fake_active", false) -> {
+                    repo.remove(990_001)
+                    repo.upsert(call(990_002, Category.ACTIVE_CALL, null, "End Call"))
+                }
+                else -> { repo.remove(990_001); repo.remove(990_002) }
+            }
+            return
+        }
         if (intent.getBooleanExtra("clear_contacts", false)) {
             BridgeGraph.contacts.clear()
             return

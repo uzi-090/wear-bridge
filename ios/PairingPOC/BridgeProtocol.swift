@@ -155,6 +155,14 @@ struct WatchPrefs: Equatable {
     var popupStyle: PopupStyle
     var history: Bool
     var endCall: Bool
+    /// Call gestures on the watch. nil from watches that predate them.
+    var calls: CallGestures?
+}
+
+struct CallGestures: Equatable {
+    var shakeToDecline: Bool
+    var shakeToEnd: Bool
+    var bezelToAnswer: Bool
 }
 
 struct WatchSettings: Equatable {
@@ -242,13 +250,18 @@ enum SettingsCodec {
         if r.remaining >= 2 {
             let popup = try r.u8()
             let f = try r.u8()
-            prefs = WatchPrefs(popupStyle: .init(rawValue: popup) ?? .standard, history: f & 1 != 0, endCall: f & 2 != 0)
+            let calls = f & 0x80 != 0 ? CallGestures(shakeToDecline: f & 4 != 0, shakeToEnd: f & 8 != 0, bezelToAnswer: f & 16 != 0) : nil
+            prefs = WatchPrefs(popupStyle: .init(rawValue: popup) ?? .standard, history: f & 1 != 0, endCall: f & 2 != 0, calls: calls)
         }
         return WatchSettings(mode: mode, apps: apps, prefs: prefs)
     }
 
     static func encodeSetPrefs(_ p: WatchPrefs) -> [UInt8] {
-        [p.popupStyle.rawValue, (p.history ? 1 : 0) | (p.endCall ? 2 : 0)]
+        var flags: UInt8 = (p.history ? 1 : 0) | (p.endCall ? 2 : 0)
+        if let c = p.calls {
+            flags |= 0x80 | (c.shakeToDecline ? 4 : 0) | (c.shakeToEnd ? 8 : 0) | (c.bezelToAnswer ? 16 : 0)
+        }
+        return [p.popupStyle.rawValue, flags]
     }
 
     static func encodeSetAppRule(bundleId: String, enabled: Bool, vibrate: Bool, hideContent: Bool?) -> [UInt8] {

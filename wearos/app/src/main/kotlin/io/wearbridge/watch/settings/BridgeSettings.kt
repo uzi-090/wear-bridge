@@ -21,6 +21,22 @@ class BridgeSettings(context: Context) {
         _endCallFromWatch.value = enabled
     }
 
+    private val _shakeToDecline = MutableStateFlow(prefs.getBoolean(KEY_SHAKE_DECLINE, true))
+    /** Shake the wrist to decline a ringing call. On by default; the detector needs a deliberate shake. */
+    val shakeToDecline: StateFlow<Boolean> = _shakeToDecline
+
+    private val _shakeToEnd = MutableStateFlow(prefs.getBoolean(KEY_SHAKE_END, false))
+    /** Shake to end a connected call. Off by default: ending a call by accident is worse. Needs End Call. */
+    val shakeToEnd: StateFlow<Boolean> = _shakeToEnd
+
+    private val _bezelToAnswer = MutableStateFlow(prefs.getBoolean(KEY_BEZEL_ANSWER, true))
+    /** Turn the bezel 3 clicks: clockwise answers, anticlockwise declines. */
+    val bezelToAnswer: StateFlow<Boolean> = _bezelToAnswer
+
+    fun setShakeToDecline(on: Boolean) { prefs.edit().putBoolean(KEY_SHAKE_DECLINE, on).apply(); _shakeToDecline.value = on }
+    fun setShakeToEnd(on: Boolean) { prefs.edit().putBoolean(KEY_SHAKE_END, on).apply(); _shakeToEnd.value = on }
+    fun setBezelToAnswer(on: Boolean) { prefs.edit().putBoolean(KEY_BEZEL_ANSWER, on).apply(); _bezelToAnswer.value = on }
+
     private val _history = MutableStateFlow(prefs.getBoolean(KEY_HISTORY, false))
 
     /**
@@ -62,6 +78,9 @@ class BridgeSettings(context: Context) {
         const val KEY_POPUP = "popup_style"
         const val KEY_SUBTLE_LEGACY = "subtle_popups"
         const val KEY_HISTORY = "history"
+        const val KEY_SHAKE_DECLINE = "shake_decline"
+        const val KEY_SHAKE_END = "shake_end"
+        const val KEY_BEZEL_ANSWER = "bezel_answer"
     }
 }
 

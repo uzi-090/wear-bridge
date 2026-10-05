@@ -40,7 +40,15 @@ data class AppEntry(
 )
 
 /** Watch-wide preferences. [popupStyle] uses [PopupCode]. */
-data class WatchPrefs(val popupStyle: Int, val history: Boolean, val endCall: Boolean)
+data class WatchPrefs(
+    val popupStyle: Int,
+    val history: Boolean,
+    val endCall: Boolean,
+    /** Call gestures. Null on watches that predate them (flags bit 7 clear). */
+    val calls: CallGestures? = null,
+)
+
+data class CallGestures(val shakeToDecline: Boolean, val shakeToEnd: Boolean, val bezelToAnswer: Boolean)
 
 object PopupCode {
     const val STANDARD = 0
@@ -96,9 +104,15 @@ object SettingsCodec {
         return decodePrefsFields(bytes[0].toInt() and 0xFF, bytes[1].toInt() and 0xFF)
     }
 
-    private fun prefsFlags(p: WatchPrefs) = (if (p.history) 1 else 0) or (if (p.endCall) 2 else 0)
+    private fun prefsFlags(p: WatchPrefs) = (if (p.history) 1 else 0) or (if (p.endCall) 2 else 0) or
+        (p.calls?.let { c -> 0x80 or (if (c.shakeToDecline) 4 else 0) or (if (c.shakeToEnd) 8 else 0) or (if (c.bezelToAnswer) 16 else 0) } ?: 0)
 
-    private fun decodePrefsFields(popup: Int, flags: Int) = WatchPrefs(popup, history = flags and 1 != 0, endCall = flags and 2 != 0)
+    private fun decodePrefsFields(popup: Int, flags: Int) = WatchPrefs(
+        popup,
+        history = flags and 1 != 0,
+        endCall = flags and 2 != 0,
+        calls = if (flags and 0x80 != 0) CallGestures(flags and 4 != 0, flags and 8 != 0, flags and 16 != 0) else null,
+    )
 
     fun encodeSetAppRule(m: SetAppRule): ByteArray = Writer().apply {
         str(m.bundleId)

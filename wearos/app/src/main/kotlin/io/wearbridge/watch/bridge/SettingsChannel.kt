@@ -10,6 +10,7 @@ import io.wearbridge.protocol.PopupCode
 import io.wearbridge.protocol.Reassembler
 import io.wearbridge.protocol.SettingsCodec
 import io.wearbridge.protocol.SettingsSnapshot
+import io.wearbridge.protocol.CallGestures
 import io.wearbridge.protocol.WatchPrefs
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.ble.BridgePeripheral
@@ -53,7 +54,10 @@ class SettingsChannel(
         scope.launch {
             combine(
                 policy.mode, policy.rules, combine(policy.seenApps, policy.mediaApps) { a, b -> a to b }, icons.version,
-                combine(settings.popupStyle, settings.history, settings.endCallFromWatch) { _, _, _ -> },
+                combine(
+                    settings.popupStyle, settings.history, settings.endCallFromWatch,
+                    combine(settings.shakeToDecline, settings.shakeToEnd, settings.bezelToAnswer) { _, _, _ -> },
+                ) { _, _, _, _ -> },
             ) { _, _, _, _, _ -> }.drop(1).collect { schedulePush() }
         }
     }
@@ -119,6 +123,11 @@ class SettingsChannel(
                     settings.setPopupStyle(if (p.popupStyle == PopupCode.SUBTLE) PopupStyle.SUBTLE else PopupStyle.FULL)
                     BridgeGraph.setHistory(p.history)
                     settings.setEndCallFromWatch(p.endCall)
+                    p.calls?.let {
+                        settings.setShakeToDecline(it.shakeToDecline)
+                        settings.setShakeToEnd(it.shakeToEnd)
+                        settings.setBezelToAnswer(it.bezelToAnswer)
+                    }
                     DiagLog.i("settings: prefs popup=${p.popupStyle} history=${p.history} endCall=${p.endCall}")
                 }
                 else -> DiagLog.w("settings: unknown message type ${message.type}")
@@ -171,6 +180,7 @@ class SettingsChannel(
             popupStyle = if (settings.popupStyle.value == PopupStyle.SUBTLE) PopupCode.SUBTLE else PopupCode.STANDARD,
             history = settings.history.value,
             endCall = settings.endCallFromWatch.value,
+            calls = CallGestures(settings.shakeToDecline.value, settings.shakeToEnd.value, settings.bezelToAnswer.value),
         )
         return SettingsSnapshot(modeToCode(policy.mode.value), apps, prefs)
     }

@@ -28,6 +28,9 @@ class ProtocolTest {
         assertEquals(null, SettingsCodec.decodeSnapshot(SettingsCodec.encodeSnapshot(snapshot)).prefs)
         val p = WatchPrefs(PopupCode.STANDARD, history = false, endCall = true)
         assertEquals(p, SettingsCodec.decodeSetPrefs(SettingsCodec.encodeSetPrefs(p)))
+        val withCalls = p.copy(calls = CallGestures(shakeToDecline = true, shakeToEnd = false, bezelToAnswer = true))
+        assertEquals(withCalls, SettingsCodec.decodeSetPrefs(SettingsCodec.encodeSetPrefs(withCalls)))
+        assertEquals(listOf<Byte>(0, (0x80 or 2 or 4 or 16).toByte()), SettingsCodec.encodeSetPrefs(withCalls).toList())
     }
 
     @Test

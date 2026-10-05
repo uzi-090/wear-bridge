@@ -82,6 +82,11 @@ final class BridgeProtocolTests: XCTestCase {
         let prefs = try SettingsCodec.decodeSnapshot(base + [1, 0b11]).prefs
         XCTAssertEqual(prefs, WatchPrefs(popupStyle: .subtle, history: true, endCall: true))
         XCTAssertEqual(SettingsCodec.encodeSetPrefs(prefs!), [1, 0b11])
+        // Call gestures: the same byte the watch's ProtocolTest asserts (0x80 | endCall | shakeDecline | bezel).
+        let calls = WatchPrefs(popupStyle: .standard, history: false, endCall: true,
+                               calls: CallGestures(shakeToDecline: true, shakeToEnd: false, bezelToAnswer: true))
+        XCTAssertEqual(SettingsCodec.encodeSetPrefs(calls), [0, 0x80 | 2 | 4 | 16])
+        XCTAssertEqual(try SettingsCodec.decodeSnapshot([2, 0, 0, 0, 0x80 | 2 | 4 | 16]).prefs, calls)
     }
 
     func testFramingSplitsAndReassembles() {

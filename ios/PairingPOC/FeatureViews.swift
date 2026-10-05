@@ -50,6 +50,8 @@ struct CallsView: View {
                            detail: "Caller name or number on your watch, with Answer and Decline.", works: true)
                 Capability(symbol: "phone.down.fill", tint: .red, title: "Missed calls",
                            detail: "Shown on your watch with iOS's own actions.", works: true)
+                Capability(symbol: "speaker.slash.fill", tint: .indigo, title: "Silence",
+                           detail: "Stops the watch ringing. Your iPhone keeps ringing: iOS doesn't let accessories silence it.", works: true)
             } header: {
                 Text("On your watch")
             }
@@ -63,6 +65,28 @@ struct CallsView: View {
                            detail: "Not available. iOS doesn't let apps start a call in the background.", works: false)
             } header: {
                 Text("Audio routing and limits")
+            }
+
+            if let prefs = link.watchSettings?.prefs, let calls = prefs.calls {
+                Section {
+                    Toggle("Bezel to answer", isOn: Binding(
+                        get: { calls.bezelToAnswer },
+                        set: { var p = prefs; p.calls?.bezelToAnswer = $0; link.setPrefs(p) }
+                    ))
+                    Toggle("Shake to decline", isOn: Binding(
+                        get: { calls.shakeToDecline },
+                        set: { var p = prefs; p.calls?.shakeToDecline = $0; link.setPrefs(p) }
+                    ))
+                    Toggle("Shake to end call", isOn: Binding(
+                        get: { calls.shakeToEnd },
+                        set: { var p = prefs; p.calls?.shakeToEnd = $0; link.setPrefs(p) }
+                    ))
+                    .disabled(!prefs.endCall)
+                } header: {
+                    Text("Gestures on your watch")
+                } footer: {
+                    Text("Turn the bezel 3 clicks clockwise to answer, or anticlockwise to decline. A firm shake declines a ringing call. Shake to end needs End calls from watch, below. Silence (on the call screen, or Back) stops the watch only: iOS doesn't let accessories silence the iPhone.")
+                }
             }
 
             if let prefs = link.watchSettings?.prefs {

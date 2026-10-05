@@ -52,6 +52,8 @@ object BridgeGraph {
         private set
     lateinit var contacts: ContactsStore
         private set
+    lateinit var calls: io.wearbridge.watch.calls.CallController
+        private set
 
     internal val callRequestFlow = MutableStateFlow(CallRequestState.IDLE)
     val callRequest: StateFlow<CallRequestState> = callRequestFlow
@@ -109,6 +111,7 @@ object BridgeGraph {
         findWatch = FindWatchAlert(app).also { it.createChannel() }
         identity = IdentityStore(app)
         contacts = ContactsStore(app)
+        calls = io.wearbridge.watch.calls.CallController(app).also { it.start() }
         approvals = ApprovalNotifier(app).also { it.createChannel() }
     }
 

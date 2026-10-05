@@ -79,6 +79,7 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
 
     fun createChannels() {
         val nm = context.getSystemService(NotificationManager::class.java)
+        nm.deleteNotificationChannel("calls") // replaced by calls_v2
         nm.createNotificationChannels(
             listOf(
                 NotificationChannel(CHANNEL_ALERT, "iPhone notifications", NotificationManager.IMPORTANCE_HIGH).apply {
@@ -92,9 +93,12 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
                 NotificationChannel(CHANNEL_QUIET, "Silent iPhone notifications", NotificationManager.IMPORTANCE_LOW).apply {
                     description = "Mirrored without sound or vibration"
                 },
+                // Bridge plays the ring vibration itself (CallController), so Silence can stop it and shake
+                // can work. The channel only provides the heads-up, without its own vibration or sound.
                 NotificationChannel(CHANNEL_CALLS, "iPhone calls", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Incoming calls on your iPhone"
-                    enableVibration(true)
+                    enableVibration(false)
+                    setSound(null, null)
                 },
                 NotificationChannel(CHANNEL_SERVICE, "Connection", NotificationManager.IMPORTANCE_MIN).apply {
                     description = "Keeps the iPhone connection running"
@@ -140,10 +144,12 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
             .setOnlyAlertOnce(true)
             .setSilent(!alert)
             .setGroup(GROUP_PREFIX + (a.appIdentifier ?: "unknown"))
-            .setContentIntent(openIntent(n.uid))
+            // Tapping a call opens the call screen; everything else opens its detail in Bridge.
+            .setContentIntent(if (n.isIncomingCall) callIntent() else openIntent(n.uid))
             .setLocalOnly(true)
 
         a.negativeActionLabel?.let { builder.addAction(0, it, actionIntent(n.uid, ActionId.NEGATIVE)) }
+        if (n.isIncomingCall) builder.addAction(0, "Silence", silenceIntent())
         a.positiveActionLabel?.let {
             // Answering a call opens the call screen (it becomes the in-call screen with "End Call").
             // An activity PendingIntent is allowed from a notification, whereas a broadcast can't start UI.
@@ -241,6 +247,11 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
+    private fun silenceIntent(): PendingIntent = PendingIntent.getBroadcast(
+        context, 3, Intent(context, ActionReceiver::class.java).putExtra(ActionReceiver.EXTRA_SILENCE, true),
+        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+    )
+
     private fun actionIntent(uid: Long, action: ActionId): PendingIntent = PendingIntent.getBroadcast(
         context,
         (uid.toInt() shl 1) or action.id,
@@ -254,7 +265,8 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         const val CHANNEL_ALERT = "mirror_alert"
         const val CHANNEL_QUIET = "mirror_quiet"
         const val CHANNEL_SUBTLE = "mirror_subtle"
-        const val CHANNEL_CALLS = "calls"
+        /** v2: channels are immutable once created, and v1 vibrated by itself. */
+        const val CHANNEL_CALLS = "calls_v2"
         const val CHANNEL_SERVICE = "service"
         const val SERVICE_NOTIFICATION_ID = 1
         private const val MAX_POSTED = 24
