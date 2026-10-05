@@ -16,6 +16,10 @@ targets:
     platform: iOS
     sources:
       - PairingPOC
+    # Find iPhone alerts ask for Time Sensitive delivery (breaks through Focus). That needs the
+    # com.apple.developer.usernotifications.time-sensitive entitlement, which personal (free) teams can't
+    # sign, so it's off here. With a paid team, add:
+    #   entitlements: { path: PairingPOC/PairingPOC.entitlements, properties: { com.apple.developer.usernotifications.time-sensitive: true } }
     info:
       path: PairingPOC/Info.plist
       properties:

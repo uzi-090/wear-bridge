@@ -7,11 +7,33 @@ enum BridgeProtocol {
     static let headerBytes = 4
 
     enum MessageType: UInt8 {
+        // SETTINGS
         case getSettings = 0x01
         case setAppRule = 0x02
         case setMode = 0x03
         case setAppIcon = 0x04
+        case setPrefs = 0x05
         case settings = 0x81
+        // CONTROL (iPhone → watch)
+        case findWatch = 0x10
+        case findPhoneStopped = 0x11
+        case ping = 0x12
+        // EVENTS (watch → iPhone)
+        case findPhone = 0x90
+        case findWatchStopped = 0x91
+        // DEVICE_STATUS (watch → iPhone)
+        case status = 0xA0
+    }
+
+    /// Capability bits in the PAIRING value (`BridgeUuids` on the watch).
+    struct Capabilities: OptionSet, Sendable {
+        let rawValue: UInt32
+        static let ancs = Capabilities(rawValue: 1 << 0)
+        static let media = Capabilities(rawValue: 1 << 1)
+        static let settings = Capabilities(rawValue: 1 << 2)
+        static let deviceStatus = Capabilities(rawValue: 1 << 3)
+        static let find = Capabilities(rawValue: 1 << 4)
+        static let prefs = Capabilities(rawValue: 1 << 5)
     }
 
     static func split(type: MessageType, messageId: UInt8, payload: [UInt8], maxChunkBytes: Int) -> [Data] {
@@ -112,16 +134,67 @@ struct WatchApp: Identifiable, Equatable {
     var displayName: String { name.trimmingCharacters(in: CharacterSet(charactersIn: "\u{200E}\u{200F}").union(.whitespaces)) }
 }
 
+/// Watch-wide preferences (stored and applied on the watch).
+struct WatchPrefs: Equatable {
+    enum PopupStyle: UInt8 { case standard = 0, subtle = 1 }
+    var popupStyle: PopupStyle
+    var history: Bool
+    var endCall: Bool
+}
+
 struct WatchSettings: Equatable {
     var mode: FilterMode
     var apps: [WatchApp]
+    /// nil from watches older than v1.1.
+    var prefs: WatchPrefs?
+}
+
+/// The watch's own state, pushed over DEVICE_STATUS when it changes.
+struct WatchStatus: Equatable {
+    var battery: Int?
+    var charging: Bool
+    var notificationsReady: Bool
+    var mediaReady: Bool
+    var inboxCount: Int
+    var model: String
+    var osVersion: String
+    var appVersion: String
+
+    /// Marketing name for Samsung model numbers (SM-R8xx = Galaxy Watch4 family).
+    var displayName: String {
+        let m = model.uppercased()
+        if m.hasPrefix("SM-R88") || m.hasPrefix("SM-R89") { return "Galaxy Watch4 Classic" }
+        if m.hasPrefix("SM-R86") || m.hasPrefix("SM-R87") { return "Galaxy Watch4" }
+        if m.hasPrefix("SM-R9") { return "Galaxy Watch" }
+        return model.isEmpty ? "Your watch" : model
+    }
+}
+
+enum BridgeCodec {
+    static func decodeStatus(_ payload: [UInt8]) throws -> WatchStatus {
+        var r = ByteReader(bytes: payload)
+        let battery = try r.u8()
+        let flags = try r.u8()
+        return WatchStatus(
+            battery: battery <= 100 ? Int(battery) : nil,
+            charging: flags & 1 != 0,
+            notificationsReady: flags & 2 != 0,
+            mediaReady: flags & 4 != 0,
+            inboxCount: try r.u16(),
+            model: try r.str(),
+            osVersion: try r.str(),
+            appVersion: try r.str()
+        )
+    }
+
+    static func encodeSwitch(_ on: Bool) -> [UInt8] { [on ? 1 : 0] }
 }
 
 enum SettingsCodec {
     struct DecodeError: Error {}
 
     static func decodeSnapshot(_ payload: [UInt8]) throws -> WatchSettings {
-        var r = Reader(bytes: payload)
+        var r = ByteReader(bytes: payload)
         let mode = FilterMode(rawValue: try r.u8()) ?? .all
         let count = try r.u16()
         var apps: [WatchApp] = []
@@ -137,7 +210,17 @@ enum SettingsCodec {
                                  hideContent: hide, hiddenByDefault: flags & 4 != 0, color: color, logo: logo,
                                  hasIcon: flags & 8 != 0))
         }
-        return WatchSettings(mode: mode, apps: apps)
+        var prefs: WatchPrefs?
+        if r.remaining >= 2 {
+            let popup = try r.u8()
+            let f = try r.u8()
+            prefs = WatchPrefs(popupStyle: .init(rawValue: popup) ?? .standard, history: f & 1 != 0, endCall: f & 2 != 0)
+        }
+        return WatchSettings(mode: mode, apps: apps, prefs: prefs)
+    }
+
+    static func encodeSetPrefs(_ p: WatchPrefs) -> [UInt8] {
+        [p.popupStyle.rawValue, (p.history ? 1 : 0) | (p.endCall ? 2 : 0)]
     }
 
     static func encodeSetAppRule(bundleId: String, enabled: Bool, vibrate: Bool, hideContent: Bool?) -> [UInt8] {
@@ -170,30 +253,35 @@ enum SettingsCodec {
         }
         return [UInt8(bytes.count)] + bytes
     }
+}
 
-    private struct Reader {
-        let bytes: [UInt8]
-        var p = 0
+/// u8 / u16 / u32 big-endian, strings as u8 length + UTF-8. Mirrors the watch's readers.
+struct ByteReader {
+    struct DecodeError: Error {}
 
-        mutating func u8() throws -> UInt8 {
-            guard p < bytes.count else { throw DecodeError() }
-            defer { p += 1 }
-            return bytes[p]
-        }
+    let bytes: [UInt8]
+    var p = 0
 
-        mutating func u16() throws -> Int { Int(try u8()) << 8 | Int(try u8()) }
+    var remaining: Int { bytes.count - p }
 
-        mutating func u32() throws -> UInt32 {
-            var v: UInt32 = 0
-            for _ in 0..<4 { v = v << 8 | UInt32(try u8()) }
-            return v
-        }
+    mutating func u8() throws -> UInt8 {
+        guard p < bytes.count else { throw DecodeError() }
+        defer { p += 1 }
+        return bytes[p]
+    }
 
-        mutating func str() throws -> String {
-            let n = Int(try u8())
-            guard p + n <= bytes.count else { throw DecodeError() }
-            defer { p += n }
-            return String(decoding: bytes[p..<p + n], as: UTF8.self)
-        }
+    mutating func u16() throws -> Int { Int(try u8()) << 8 | Int(try u8()) }
+
+    mutating func u32() throws -> UInt32 {
+        var v: UInt32 = 0
+        for _ in 0..<4 { v = v << 8 | UInt32(try u8()) }
+        return v
+    }
+
+    mutating func str() throws -> String {
+        let n = Int(try u8())
+        guard p + n <= bytes.count else { throw DecodeError() }
+        defer { p += n }
+        return String(decoding: bytes[p..<p + n], as: UTF8.self)
     }
 }

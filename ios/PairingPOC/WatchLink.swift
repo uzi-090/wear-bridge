@@ -8,6 +8,8 @@ enum BridgeUUID {
     static let service = CBUUID(string: "9C664C93-19F2-435D-895A-A40751731AE1")
     static let pairing = CBUUID(string: "9C664C93-19F2-435D-0001-A40751731AE1")
     static let control = CBUUID(string: "9C664C93-19F2-435D-0002-A40751731AE1")
+    static let events = CBUUID(string: "9C664C93-19F2-435D-0003-A40751731AE1")
+    static let deviceStatus = CBUUID(string: "9C664C93-19F2-435D-0005-A40751731AE1")
     static let settings = CBUUID(string: "9C664C93-19F2-435D-0006-A40751731AE1")
 }
 
@@ -41,7 +43,13 @@ final class WatchLink: NSObject {
     private(set) var phase: Phase = .starting
     private(set) var watchName: String?
     private(set) var protocolVersion: Int?
-    private(set) var lastPing: Date?
+    private(set) var capabilities: BridgeProtocol.Capabilities = []
+    /// The watch's battery and link state. Kept after a disconnect, so the app can show when it was last seen.
+    private(set) var watchStatus: WatchStatus?
+    /// When the watch last sent anything over the bridge.
+    private(set) var lastSync: Date?
+    /// True while this iPhone is making the watch ring.
+    private(set) var ringingWatch = false
     private(set) var nearby: [Nearby] = []
     private(set) var showingAllNearby = false
     /// Redacted: states and error codes only, never names or identifiers.
@@ -54,14 +62,32 @@ final class WatchLink: NSObject {
     @ObservationIgnored private var control: CBCharacteristic?
     @ObservationIgnored private var settingsCharacteristic: CBCharacteristic?
     @ObservationIgnored private var settingsReassembler = BridgeReassembler()
+    @ObservationIgnored private var eventsReassembler = BridgeReassembler()
+    @ObservationIgnored private var statusReassembler = BridgeReassembler()
     @ObservationIgnored private var nextMessageId: UInt8 = 0
     /// Set when pairing fails. Stops auto-reconnect from silently starting another attempt (found on hardware).
     @ObservationIgnored private var pairingFailed = false
 
     private static let savedIdentifierKey = "bridge.watch.identifier"
 
+    private static let startedKey = "bridge.bluetooth.started"
+
     override init() {
         super.init()
+        // Existing users (and iOS relaunching us for state restoration) start Bluetooth at once. New users
+        // start it from onboarding, after we've explained why, because creating the manager shows iOS's prompt.
+        if hasSavedWatch || UserDefaults.standard.bool(forKey: Self.startedKey) {
+            start()
+        } else {
+            phase = .notSetUp
+        }
+    }
+
+    /// Creates the Bluetooth central (and so triggers iOS's Bluetooth permission prompt the first time).
+    func start() {
+        guard central == nil else { return }
+        UserDefaults.standard.set(true, forKey: Self.startedKey)
+        phase = .starting
         central = CBCentralManager(
             delegate: self,
             queue: .main,
@@ -69,12 +95,14 @@ final class WatchLink: NSObject {
         )
     }
 
+    var bluetoothStarted: Bool { central != nil }
+
     var hasSavedWatch: Bool { UserDefaults.standard.string(forKey: Self.savedIdentifierKey) != nil }
 
     // MARK: - User intents
 
     func findWatch() {
-        guard central.state == .poweredOn else { return }
+        guard central?.state == .poweredOn else { return }
         nearby = []
         showingAllNearby = false
         pairingFailed = false
@@ -85,7 +113,7 @@ final class WatchLink: NSObject {
 
     /// Fallback if the watch's scan response isn't matched by the filtered scan (risk R-02).
     func showAllNearby() {
-        guard central.state == .poweredOn else { return }
+        guard central?.state == .poweredOn else { return }
         central.stopScan()
         nearby = []
         showingAllNearby = true
@@ -95,19 +123,28 @@ final class WatchLink: NSObject {
     }
 
     func choose(_ item: Nearby) {
-        central.stopScan()
+        central?.stopScan()
         attach(item.peripheral)
     }
 
     func cancelSearch() {
-        central.stopScan()
+        central?.stopScan()
         phase = hasSavedWatch ? .reconnecting : .notSetUp
     }
 
-    func sendPing() {
-        guard let p = peripheral, let c = control, p.state == .connected else { return }
-        p.writeValue(Data([0x01]), for: c, type: .withResponse)
+    func sendPing() { send(.ping, [], on: control) }
+
+    /// Rings the watch until someone taps Found it (on either device) or the watch's 60 s limit.
+    func ringWatch(_ ring: Bool) {
+        guard isConnected else { return }
+        ringingWatch = ring
+        send(.findWatch, BridgeCodec.encodeSwitch(ring), on: control)
     }
+
+    /// The user stopped the iPhone alert here, so the watch's "Ringing…" can end.
+    func phoneFound() { send(.findPhoneStopped, [], on: control) }
+
+    var isConnected: Bool { phase == .connected }
 
     // MARK: - Notification settings (stored and applied on the watch)
 
@@ -129,6 +166,11 @@ final class WatchLink: NSObject {
 
     func refreshSettings() { send(.getSettings, []) }
 
+    func setPrefs(_ prefs: WatchPrefs) {
+        watchSettings?.prefs = prefs // optimistic
+        send(.setPrefs, SettingsCodec.encodeSetPrefs(prefs))
+    }
+
     @ObservationIgnored private var iconsSentThisConnection: Set<String> = []
 
     /// Sends official App Store icons for apps the watch doesn't have one for yet.
@@ -148,7 +190,11 @@ final class WatchLink: NSObject {
     }
 
     private func send(_ type: BridgeProtocol.MessageType, _ payload: [UInt8]) {
-        guard let p = peripheral, let c = settingsCharacteristic, p.state == .connected else { return }
+        send(type, payload, on: settingsCharacteristic)
+    }
+
+    private func send(_ type: BridgeProtocol.MessageType, _ payload: [UInt8], on characteristic: CBCharacteristic?) {
+        guard let p = peripheral, let c = characteristic, p.state == .connected else { return }
         nextMessageId &+= 1
         // One ATT packet per chunk (no prepared writes, which the watch rejects).
         let maxChunk = min(p.maximumWriteValueLength(for: .withoutResponse), 182)
@@ -158,11 +204,13 @@ final class WatchLink: NSObject {
     }
 
     func forgetWatch() {
-        if let p = peripheral { central.cancelPeripheralConnection(p) }
+        if let p = peripheral { central?.cancelPeripheralConnection(p) }
         peripheral = nil
         control = nil
         settingsCharacteristic = nil
         watchSettings = nil
+        watchStatus = nil
+        lastSync = nil
         watchName = nil
         protocolVersion = nil
         UserDefaults.standard.removeObject(forKey: Self.savedIdentifierKey)
@@ -210,7 +258,7 @@ final class WatchLink: NSObject {
     private func pairingDidFail(_ reason: String) {
         note("pairing failed: \(reason)")
         pairingFailed = true
-        if let p = peripheral { central.cancelPeripheralConnection(p) } // also cancels auto-reconnect
+        if let p = peripheral { central?.cancelPeripheralConnection(p) } // also cancels auto-reconnect
         phase = .needsAttention("Pairing didn't finish. " + Self.forgetSteps)
     }
 
@@ -222,7 +270,7 @@ final class WatchLink: NSObject {
         }
         if let cb = error as? CBError, cb.code == .peerRemovedPairingInformation {
             pairingFailed = true
-            if let p = peripheral { central.cancelPeripheralConnection(p) }
+            if let p = peripheral { central?.cancelPeripheralConnection(p) }
             phase = .needsAttention("Your watch no longer recognises this iPhone. " + Self.forgetSteps)
         } else if let att = error as? CBATTError, [.insufficientAuthentication, .insufficientEncryption].contains(att.code) {
             pairingDidFail("att code=\(att.code.rawValue)")
@@ -241,11 +289,38 @@ final class WatchLink: NSObject {
             guard message.type == BridgeProtocol.MessageType.settings.rawValue else { return }
             do {
                 watchSettings = try SettingsCodec.decodeSnapshot(message.payload)
+                lastSync = Date()
                 note("settings: \(watchSettings?.apps.count ?? 0) apps")
                 syncIcons()
             } catch {
                 note("settings: malformed snapshot")
             }
+        }
+    }
+
+    private func receiveEventChunk(_ chunk: Data) {
+        guard case .complete(let m) = eventsReassembler.accept(chunk) else { return }
+        lastSync = Date()
+        switch BridgeProtocol.MessageType(rawValue: m.type) {
+        case .findPhone:
+            let ring = m.payload.first == 1
+            note("event: find phone ring=\(ring)")
+            if ring { FindMyPhone.shared.start(onFound: { [weak self] in self?.phoneFound() }) } else { FindMyPhone.shared.stop() }
+        case .findWatchStopped:
+            note("event: watch found")
+            ringingWatch = false
+        default:
+            note("event: unknown type \(m.type)")
+        }
+    }
+
+    private func receiveStatusChunk(_ chunk: Data) {
+        guard case .complete(let m) = statusReassembler.accept(chunk), m.type == BridgeProtocol.MessageType.status.rawValue else { return }
+        do {
+            watchStatus = try BridgeCodec.decodeStatus(m.payload)
+            lastSync = Date()
+        } catch {
+            note("status: malformed")
         }
     }
 
@@ -324,8 +399,11 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
     ) {
         note("disconnected autoReconnect=\(isReconnecting) code=\((error as NSError?)?.code ?? 0)")
         watchSettings = nil // only show what the watch confirms
+        ringingWatch = false
         iconsSentThisConnection.removeAll()
         settingsReassembler.reset()
+        eventsReassembler.reset()
+        statusReassembler.reset()
         // Dropping mid-pairing is how a rejected pairing usually shows up.
         if phase == .pairing && !hasSavedWatch { pairingDidFail("link dropped during pairing") }
         guard !pairingFailed, peripheral.identifier == self.peripheral?.identifier, hasSavedWatch else { return }
@@ -346,7 +424,8 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
             phase = .needsAttention("This device isn't running Bridge. Open Bridge on your watch and try again.")
             return
         }
-        peripheral.discoverCharacteristics([BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings], for: service)
+        peripheral.discoverCharacteristics(
+            [BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -363,37 +442,45 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        if characteristic.uuid == BridgeUUID.settings {
+        switch characteristic.uuid {
+        case BridgeUUID.settings:
             if let value = characteristic.value { receiveSettingsChunk(value) }
             return
+        case BridgeUUID.events:
+            if let value = characteristic.value { receiveEventChunk(value) }
+            return
+        case BridgeUUID.deviceStatus:
+            if let value = characteristic.value { receiveStatusChunk(value) }
+            return
+        default:
+            break
         }
         if let error { return handle(error: error, context: "pairing read") }
         guard characteristic.uuid == BridgeUUID.pairing, let value = characteristic.value, !value.isEmpty else { return }
+        let pairing = characteristic
         protocolVersion = Int(value[value.startIndex])
+        if value.count >= 5 {
+            let b = [UInt8](value)
+            capabilities = .init(rawValue: UInt32(b[1]) | UInt32(b[2]) << 8 | UInt32(b[3]) << 16 | UInt32(b[4]) << 24)
+        }
         watchName = peripheral.name
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.savedIdentifierKey)
         phase = .connected
         note("bonded, protocol v\(protocolVersion ?? 0)")
-        // Subscribing makes the watch send its current settings.
-        if let s = settingsCharacteristic { peripheral.setNotifyValue(true, for: s) }
+        // Subscribing makes the watch send its current settings and status. Events (Find iPhone) arrive
+        // even while this app is in the background: iOS wakes it for them (bluetooth-central mode).
+        let wanted: Set<CBUUID> = [BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus]
+        for c in pairing.service?.characteristics ?? [] where wanted.contains(c.uuid) {
+            peripheral.setNotifyValue(true, for: c)
+        }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == BridgeUUID.control else {
-            if let error { note("settings write failed code=\((error as NSError).code)") }
-            return
-        }
-        if let error {
-            note("ping failed code=\((error as NSError).code)")
-        } else {
-            lastPing = Date()
-            note("ping ok")
-        }
+        if let error { note("write failed code=\((error as NSError).code)") }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
-        guard characteristic.uuid == BridgeUUID.settings else { return }
-        note("settings notify=\(characteristic.isNotifying) code=\((error as NSError?)?.code ?? 0)")
+        note("notify \(characteristic.uuid.uuidString.prefix(8))… on=\(characteristic.isNotifying) code=\((error as NSError?)?.code ?? 0)")
     }
 
     func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {

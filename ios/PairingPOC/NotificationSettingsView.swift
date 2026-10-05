@@ -17,6 +17,28 @@ struct NotificationSettingsView: View {
                         Text(settings.mode.detail)
                     }
 
+                    if let prefs = settings.prefs {
+                        Section {
+                            Picker("Pop-ups", selection: Binding(
+                                get: { prefs.popupStyle },
+                                set: { var p = prefs; p.popupStyle = $0; link.setPrefs(p) }
+                            )) {
+                                Text("Standard").tag(WatchPrefs.PopupStyle.standard)
+                                Text("Subtle").tag(WatchPrefs.PopupStyle.subtle)
+                            }
+                            Toggle("Keep history", isOn: Binding(
+                                get: { prefs.history },
+                                set: { var p = prefs; p.history = $0; link.setPrefs(p) }
+                            ))
+                        } header: {
+                            Text("On your watch")
+                        } footer: {
+                            Text(prefs.popupStyle == .standard
+                                 ? "Standard: new notifications pop up full screen over the watch face (Samsung decides the style). History keeps notifications for 24 hours after you clear them on iPhone, except hidden apps."
+                                 : "Subtle: your watch vibrates and the notification waits in its list, with no pop-up. History keeps notifications for 24 hours after you clear them on iPhone, except hidden apps.")
+                        }
+                    }
+
                     Section {
                         ForEach(settings.apps) { app in
                             NavigationLink {
@@ -132,12 +154,3 @@ struct AppBadge: View {
     }
 }
 
-extension Color {
-    init(argb: UInt32) {
-        self.init(
-            red: Double((argb >> 16) & 0xFF) / 255,
-            green: Double((argb >> 8) & 0xFF) / 255,
-            blue: Double(argb & 0xFF) / 255
-        )
-    }
-}

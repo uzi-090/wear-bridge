@@ -26,6 +26,14 @@ final class AppIconService {
 
     func isLookupable(_ bundleId: String) -> Bool { !bundleId.hasPrefix("com.apple.") }
 
+    /// Privacy control: forgets every cached icon (and the record of which apps were looked up).
+    func clearCache() {
+        icons.removeAll()
+        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+            files.forEach { try? FileManager.default.removeItem(at: $0) }
+        }
+    }
+
     /// Cached icon, or fetches it. Returns nil if the App Store doesn't have the app.
     func icon(for bundleId: String) async -> Data? {
         if let cached = icons[bundleId] { return cached }
