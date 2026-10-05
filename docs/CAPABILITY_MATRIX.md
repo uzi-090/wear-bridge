@@ -81,19 +81,19 @@ Google Play review risk (L/M/H).
 
 | Capability | Status | Path | API / protocol | Permission | Background | Batt | Rel | AS | GP | HW | Notes |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| Incoming cellular call detection | ✅ FULL (*verify latency*) | A | ANCS Category `IncomingCall` | as §1 | Watch FGS | L | H | L | M | — | |
+| Incoming cellular call detection | ✅ FULL (**verified**, 66–115 ms) | A | ANCS Category `IncomingCall` | as §1 | Watch FGS | L | H | L | M | — | |
 | Caller name | 🟡 LIMITED | A | ANCS `Title` (iOS resolves the contact) | | | L | H | L | L | — | Shows the iOS contact name, or the number/"Unknown". |
 | Caller number | 🟡 LIMITED | A | ANCS `Title` / `Subtitle` | | | L | M | L | L | — | Only appears when iOS shows it (unknown callers). The number isn't exposed separately for known contacts. |
 | Incoming call UI on watch | ✅ FULL | W | Full-screen activity / `CallStyle`-like surface | `USE_FULL_SCREEN_INTENT` / POST_NOTIFICATIONS | | L | H | L | M | — | |
 | Answer | 🟡 LIMITED (**verified**) | A | Perform Notification Action, using whichever action iOS labels "Answer" (**not** a hard-coded ID) | | | L | H | L | L | ✔ | Expected to answer on the iPhone, with **audio staying on the iPhone's current route**. Milestone-1 test. |
-| Decline | 🧪 EXPERIMENTAL → expected ✅ | A | Perform action, using the action labelled "Decline" | | | L | H | L | L | — | Milestone-1 test. |
+| Decline | ✅ FULL (**verified**) | A | Perform action, using the action iOS labels "Decline" | | | L | H | L | L | ✔ | 115 ms. iOS then posts a MissedCall (Dial / Clear). |
 | Silence ringer only ("dismiss") | ⛔ NOT POSSIBLE | — | ANCS has no silence action | — | — | — | — | — | — | — | **Alternative:** dismiss the watch surface only. The UI says "Still ringing on iPhone". |
-| End active call | 🧪 EXPERIMENTAL | A | **Revised after hardware test:** iOS posts an undocumented Category 12 "active call" notification with a negative action while a call is connected. If its action ends the call, this becomes possible via ANCS | — | — | — | — | M | — | — | Being verified. Undocumented behaviour = App Store/iOS-update risk. |
+| End active call | 🟡 LIMITED (**verified, undocumented**) | A | iOS posts an **undocumented Category 12** "active call" notification while a call is connected. Its only action is negative, labelled **"End Call"**, and performing it ends the cellular call (76 ms) | as §1 | Watch FGS | L | M | M | L | ✔ | Not in Apple's ANCS spec: an iOS update could change or remove it. The UI uses iOS's label and hides the button if the category disappears. |
 | Mute / hold | ⛔ NOT POSSIBLE | — | No public API on either side | — | — | — | — | — | — | — | |
 | Switch audio route | ⛔ NOT POSSIBLE | — | iOS route is user-controlled (Control Center / call UI) | — | — | — | — | — | — | — | |
 | Outgoing calls | ⛔ NOT POSSIBLE (direct) / 🟠 BEST EFFORT (handoff) | B | iOS can't place a call from the background. **Alternative:** the watch sends "call X" → the iOS app posts a local notification "Call Rahul?" → the user taps on the iPhone → `tel:` | Contacts, Notifications | iOS app relaunchable | L | M | M | L | — | Must be honest in the UI: "Continue on iPhone". |
 | Contacts-based calling | 🟠 BEST EFFORT | B | as above | | | | | | | — | |
-| Missed call notifications | ✅ FULL | A | Category `MissedCall` | | | L | H | L | L | — | Actions use iOS labels (e.g. "Call Back"/"Clear", *verify*). Call Back would ring out **on the iPhone**. |
+| Missed call notifications | ✅ FULL (**verified**) | A | Category `MissedCall` | | | L | H | L | L | ✔ | iOS labels are **"Dial" / "Clear"**. Dial would ring out **on the iPhone** (not yet tested). |
 | Voicemail | ✅ FULL | A | Category `Voicemail` | | | L | H | L | L | — | |
 | FaceTime | 🧪 EXPERIMENTAL | A | *Verify* whether it arrives as `IncomingCall` | | | | | | | — | |
 | WhatsApp / Telegram / VoIP calls (CallKit) | 🧪 EXPERIMENTAL | A | *Verify* the category and actions iOS exposes | | | | | | | — | If it shows up as `IncomingCall` with Answer/Decline, the generic engine handles it. |
