@@ -10,10 +10,11 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.BridgePermissions
-import io.wearbridge.watch.ble.BridgeController
+import io.wearbridge.watch.ble.ConnectionManager
 import io.wearbridge.watch.ble.LinkState
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.notifications.MirrorNotifier
+import io.wearbridge.watch.notifications.NotificationEngine
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,7 +29,7 @@ import kotlinx.coroutines.launch
  */
 class BridgeService : Service() {
 
-    private var controller: BridgeController? = null
+    private var controller: ConnectionManager? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -47,7 +48,9 @@ class BridgeService : Service() {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
         BridgeGraph.notifier.clearOrphans()
-        controller = BridgeController(applicationContext, BridgeGraph.repository, BridgeGraph.notifier).also {
+        controller = ConnectionManager(applicationContext, BridgeGraph.repository) { scope ->
+            NotificationEngine(BridgeGraph.repository, BridgeGraph.notifier, BridgeGraph.settings, scope)
+        }.also {
             BridgeGraph.controller = it
             it.start()
         }

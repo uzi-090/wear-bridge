@@ -43,7 +43,7 @@ object Copy {
         }
         LinkState.ERROR -> when (s.issue) {
             LinkIssue.ADVERTISING_UNSUPPORTED -> "This watch's Bluetooth can't host the iPhone connection."
-            LinkIssue.PAIRING_FAILED -> "Try again, and confirm the code on both devices."
+            LinkIssue.PAIRING_FAILED -> "On your iPhone, open Settings › Bluetooth, forget this watch, then pair again from the Bridge app."
             LinkIssue.ANCS_UNAVAILABLE -> "On iPhone, open Settings › Bluetooth, tap ⓘ next to this watch and turn on Share System Notifications."
             else -> "The Bluetooth connection became unavailable."
         }

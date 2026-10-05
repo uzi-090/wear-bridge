@@ -47,8 +47,11 @@ struct ContentView: View {
     @ViewBuilder
     private var actions: some View {
         switch link.phase {
-        case .notSetUp, .needsAttention:
+        case .notSetUp:
             Button("Find Watch", action: link.findWatch)
+                .buttonStyle(PrimaryButtonStyle())
+        case .needsAttention:
+            Button("Try Again", action: link.findWatch)
                 .buttonStyle(PrimaryButtonStyle())
         case .searching:
             VStack(spacing: 12) {

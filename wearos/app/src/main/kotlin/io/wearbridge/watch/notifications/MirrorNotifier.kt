@@ -21,7 +21,7 @@ import io.wearbridge.watch.ui.MainActivity
  * Posts mirrored iPhone notifications as native Wear OS notifications, so they get the system's heads-up,
  * stacking and swipe-to-dismiss behaviour. Action buttons use the labels iOS supplied, verbatim.
  */
-class MirrorNotifier(private val context: Context) {
+class MirrorNotifier(private val context: Context, private val settings: io.wearbridge.watch.settings.BridgeSettings) {
 
     private val manager = NotificationManagerCompat.from(context)
 
@@ -42,6 +42,10 @@ class MirrorNotifier(private val context: Context) {
             listOf(
                 NotificationChannel(CHANNEL_ALERT, "iPhone notifications", NotificationManager.IMPORTANCE_HIGH).apply {
                     description = "Notifications mirrored from your iPhone"
+                    enableVibration(true)
+                },
+                NotificationChannel(CHANNEL_SUBTLE, "iPhone notifications (subtle)", NotificationManager.IMPORTANCE_DEFAULT).apply {
+                    description = "Vibrates without a full-screen pop-up"
                     enableVibration(true)
                 },
                 NotificationChannel(CHANNEL_QUIET, "Silent iPhone notifications", NotificationManager.IMPORTANCE_LOW).apply {
@@ -77,6 +81,7 @@ class MirrorNotifier(private val context: Context) {
         val channel = when {
             n.isIncomingCall || n.isActiveCall -> CHANNEL_CALLS
             a.flags and EventFlags.SILENT != 0 -> CHANNEL_QUIET
+            settings.subtlePopups.value -> CHANNEL_SUBTLE
             else -> CHANNEL_ALERT
         }
         val builder = NotificationCompat.Builder(context, channel)
@@ -187,6 +192,7 @@ class MirrorNotifier(private val context: Context) {
     companion object {
         const val CHANNEL_ALERT = "mirror_alert"
         const val CHANNEL_QUIET = "mirror_quiet"
+        const val CHANNEL_SUBTLE = "mirror_subtle"
         const val CHANNEL_CALLS = "calls"
         const val CHANNEL_SERVICE = "service"
         const val SERVICE_NOTIFICATION_ID = 1

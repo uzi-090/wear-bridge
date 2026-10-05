@@ -26,7 +26,7 @@ import io.wearbridge.watch.diagnostics.Redact
  * LE Secure Connections pairing. Callbacks arrive on Binder threads and are forwarded straight to
  * [Listener], which must hand them off without blocking.
  *
- * Permissions (BLUETOOTH_CONNECT / BLUETOOTH_ADVERTISE) are checked by [BridgeController] before use.
+ * Permissions (BLUETOOTH_CONNECT / BLUETOOTH_ADVERTISE) are checked by [ConnectionManager] before use.
  */
 @SuppressLint("MissingPermission")
 class BridgePeripheral(private val context: Context, private val listener: Listener) {

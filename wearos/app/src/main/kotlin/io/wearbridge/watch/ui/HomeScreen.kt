@@ -46,6 +46,7 @@ fun HomeScreen(
     onRequestPermissions: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenDiagnostics: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val items by BridgeGraph.repository.items.collectAsStateWithLifecycle()
@@ -105,6 +106,13 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Notifications") },
                     secondaryLabel = { Text(if (items.isEmpty()) "None" else "${items.size}") },
+                )
+            }
+            item {
+                FilledTonalButton(
+                    onClick = onOpenSettings,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Settings") },
                 )
             }
             item {

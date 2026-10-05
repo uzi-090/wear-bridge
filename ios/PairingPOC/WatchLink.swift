@@ -49,6 +49,8 @@ final class WatchLink: NSObject {
     @ObservationIgnored private var central: CBCentralManager!
     @ObservationIgnored private var peripheral: CBPeripheral?
     @ObservationIgnored private var control: CBCharacteristic?
+    /// Set when pairing fails. Stops auto-reconnect from silently starting another attempt (found on hardware).
+    @ObservationIgnored private var pairingFailed = false
 
     private static let savedIdentifierKey = "bridge.watch.identifier"
 
@@ -69,6 +71,7 @@ final class WatchLink: NSObject {
         guard central.state == .poweredOn else { return }
         nearby = []
         showingAllNearby = false
+        pairingFailed = false
         phase = .searching
         central.scanForPeripherals(withServices: [BridgeUUID.service])
         note("scan: bridge service")
@@ -145,12 +148,28 @@ final class WatchLink: NSObject {
         phase = .notSetUp
     }
 
+    private static let forgetSteps = "On your iPhone, open Settings › Bluetooth, tap ⓘ next to your watch and choose Forget This Device. Then tap Try Again and confirm the code on both devices."
+
+    /// Pairing failed: stop all reconnect attempts and explain the fix, rather than retrying silently.
+    private func pairingDidFail(_ reason: String) {
+        note("pairing failed: \(reason)")
+        pairingFailed = true
+        if let p = peripheral { central.cancelPeripheralConnection(p) } // also cancels auto-reconnect
+        phase = .needsAttention("Pairing didn't finish. " + Self.forgetSteps)
+    }
+
     private func handle(error: Error, context: String) {
         note("\(context) error domain=\((error as NSError).domain) code=\((error as NSError).code)")
+        // Only a first-time pairing can "fail" this way. A known watch keeps reconnecting.
+        if phase == .pairing && !hasSavedWatch {
+            return pairingDidFail("\(context) code=\((error as NSError).code)")
+        }
         if let cb = error as? CBError, cb.code == .peerRemovedPairingInformation {
-            phase = .needsAttention("Your watch no longer recognises this iPhone. In Settings › Bluetooth, forget the watch, then set it up again.")
+            pairingFailed = true
+            if let p = peripheral { central.cancelPeripheralConnection(p) }
+            phase = .needsAttention("Your watch no longer recognises this iPhone. " + Self.forgetSteps)
         } else if let att = error as? CBATTError, [.insufficientAuthentication, .insufficientEncryption].contains(att.code) {
-            phase = .needsAttention("Pairing didn't finish. Make sure the codes match, then try again.")
+            pairingDidFail("att code=\(att.code.rawValue)")
         } else {
             phase = .needsAttention("Watch connection failed. Bluetooth connection became unavailable.")
         }
@@ -205,6 +224,11 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        if pairingFailed {
+            // The system's auto-reconnect brought the link back after a failed pairing. Don't start another attempt.
+            central.cancelPeripheralConnection(peripheral)
+            return
+        }
         note("connected")
         phase = .connecting
         peripheral.discoverServices([BridgeUUID.service])
@@ -212,6 +236,7 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
         if let error { handle(error: error, context: "connect") }
+        guard !pairingFailed else { return }
         // Keep a pending connect so the link comes back when the watch is reachable again.
         central.connect(peripheral, options: [CBConnectPeripheralOptionEnableAutoReconnect: true])
     }
@@ -224,7 +249,9 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
         error: Error?
     ) {
         note("disconnected autoReconnect=\(isReconnecting) code=\((error as NSError?)?.code ?? 0)")
-        guard peripheral.identifier == self.peripheral?.identifier, hasSavedWatch else { return }
+        // Dropping mid-pairing is how a rejected pairing usually shows up.
+        if phase == .pairing && !hasSavedWatch { pairingDidFail("link dropped during pairing") }
+        guard !pairingFailed, peripheral.identifier == self.peripheral?.identifier, hasSavedWatch else { return }
         phase = .reconnecting
         if !isReconnecting {
             central.connect(peripheral, options: [CBConnectPeripheralOptionEnableAutoReconnect: true])

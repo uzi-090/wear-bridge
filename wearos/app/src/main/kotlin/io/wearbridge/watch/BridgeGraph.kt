@@ -7,11 +7,12 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import io.wearbridge.ancs.ActionId
-import io.wearbridge.watch.ble.BridgeController
+import io.wearbridge.watch.ble.ConnectionManager
 import io.wearbridge.watch.ble.LinkSnapshot
 import io.wearbridge.watch.notifications.ActionStatus
 import io.wearbridge.watch.notifications.MirrorNotifier
 import io.wearbridge.watch.notifications.NotificationRepository
+import io.wearbridge.watch.settings.BridgeSettings
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -28,6 +29,8 @@ object BridgeGraph {
         private set
     lateinit var notifier: MirrorNotifier
         private set
+    lateinit var settings: BridgeSettings
+        private set
 
     internal val linkFlow = MutableStateFlow(LinkSnapshot())
     val link: StateFlow<LinkSnapshot> = linkFlow
@@ -37,11 +40,12 @@ object BridgeGraph {
     val phoneName: StateFlow<String?> = phoneNameFlow
 
     @Volatile
-    internal var controller: BridgeController? = null
+    internal var controller: ConnectionManager? = null
 
     fun init(app: Application) {
         repository = NotificationRepository()
-        notifier = MirrorNotifier(app).also { it.createChannels() }
+        settings = BridgeSettings(app)
+        notifier = MirrorNotifier(app, settings).also { it.createChannels() }
     }
 
     fun performAction(uid: Long, action: ActionId) {
