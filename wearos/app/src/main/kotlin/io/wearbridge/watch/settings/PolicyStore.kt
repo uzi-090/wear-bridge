@@ -40,6 +40,18 @@ class PolicyStore(context: Context) {
     }
 
     /** Records an app the first time it's seen, or when its name changes. Cheap no-op otherwise. */
+    private val _mediaApps = MutableStateFlow(
+        prefs.all.filterKeys { it.startsWith(MEDIA) }.mapKeys { it.key.removePrefix(MEDIA) }.mapValues { it.value as String },
+    )
+    /** Apps seen playing media (bundle ID → name), so the iPhone can send their App Store icons. */
+    val mediaApps: StateFlow<Map<String, String>> = _mediaApps
+
+    fun noteMediaApp(bundleId: String, name: String) {
+        if (_mediaApps.value[bundleId] == name) return
+        prefs.edit().putString(MEDIA + bundleId, name).apply()
+        _mediaApps.value = _mediaApps.value + (bundleId to name)
+    }
+
     fun noteApp(bundleId: String, name: String) {
         if (_seenApps.value[bundleId] == name) return
         prefs.edit().putString(SEEN + bundleId, name).apply()
@@ -68,5 +80,6 @@ class PolicyStore(context: Context) {
         const val KEY_MODE = "mode"
         const val RULE = "rule."
         const val SEEN = "seen."
+        const val MEDIA = "media."
     }
 }

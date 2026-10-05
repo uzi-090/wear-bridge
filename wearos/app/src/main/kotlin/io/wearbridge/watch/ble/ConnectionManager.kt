@@ -31,6 +31,7 @@ import io.wearbridge.watch.security.SecureLink
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
 import io.wearbridge.watch.media.AmsClient
+import io.wearbridge.watch.notifications.AppCatalog
 import io.wearbridge.watch.notifications.ActionStatus
 import io.wearbridge.watch.notifications.NotificationEngine
 import io.wearbridge.watch.notifications.NotificationRepository
@@ -378,6 +379,11 @@ class ConnectionManager(
                 override fun onNowPlaying(state: NowPlaying) {
                     if (BridgeGraph.demoMode) return // debug screenshots show fake media only
                     val before = BridgeGraph.mediaFlow.value
+                    if (state.playerName.isNotBlank() && state.playerName != before?.playerName) {
+                        // Remember the player's bundle ID (when known) so the iPhone app sends its official icon.
+                        val app = AppCatalog.forPlayerName(state.playerName, BridgeGraph.policy.seenApps.value)
+                        app.bundleId?.let { BridgeGraph.policy.noteMediaApp(it, app.name) }
+                    }
                     BridgeGraph.mediaFlow.value = state
                     if (before?.hasPlayer != state.hasPlayer || before.state != state.state || before.supported != state.supported) {
                         DiagLog.i("ams $state") // redacted: state and counts only, never titles

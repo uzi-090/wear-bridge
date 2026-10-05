@@ -140,6 +140,8 @@ struct WatchApp: Identifiable, Equatable {
     var logo: String
     /** The watch already has an App Store icon for this app. */
     var hasIcon: Bool
+    /// Seen only playing media: icons sync, but it isn't listed in notification settings.
+    var mediaOnly: Bool = false
 
     var hidesContent: Bool { hideContent ?? hiddenByDefault }
 
@@ -234,7 +236,7 @@ enum SettingsCodec {
             let logo = try r.str()
             apps.append(WatchApp(id: id, name: name, enabled: flags & 1 != 0, vibrate: flags & 2 != 0,
                                  hideContent: hide, hiddenByDefault: flags & 4 != 0, color: color, logo: logo,
-                                 hasIcon: flags & 8 != 0))
+                                 hasIcon: flags & 8 != 0, mediaOnly: flags & 16 != 0))
         }
         var prefs: WatchPrefs?
         if r.remaining >= 2 {

@@ -61,8 +61,8 @@ final class ContactSync {
     func turnOn(link: WatchLink) {
         enabled = true
         self.link = link
-        guard isAuthorized, link.security == .secure, !syncing else { return }
-        Task { await sync(full: true) }
+        guard isAuthorized, link.security == .secure else { return }
+        start(full: true)
     }
 
     /// The user turned sync off: remove every contact from the watch and forget the sync state.
@@ -75,14 +75,33 @@ final class ContactSync {
     /// Called whenever the watch reports its status (connect, and after each change).
     func watchReported(generation: UInt32, link: WatchLink) {
         self.link = link
-        guard enabled, isAuthorized, !syncing else { return }
+        guard enabled, isAuthorized else { return }
+        if let awaiting = awaitingGeneration {
+            // Status pushes that left the watch before it committed our last sync still carry the old
+            // generation. Wait for the new one instead of starting another full sync (found on hardware).
+            if generation == awaiting || Date() > awaitingDeadline {
+                awaitingGeneration = nil
+            } else {
+                return
+            }
+        }
         if generation != lastGeneration || generation == 0 {
-            Task { await sync(full: true) }
+            start(full: true)
         } else if pendingChanges {
             pendingChanges = false
-            Task { await sync(full: false) }
+            start(full: false)
         }
     }
+
+    /// One sync at a time: `syncing` is set before the task starts, so two status pushes can't both start one.
+    private func start(full: Bool) {
+        guard !syncing else { return }
+        syncing = true
+        Task { await sync(full: full) }
+    }
+
+    @ObservationIgnored private var awaitingGeneration: UInt32?
+    @ObservationIgnored private var awaitingDeadline = Date.distantPast
 
     @ObservationIgnored private var pendingChanges = true // check once per launch
 
@@ -92,8 +111,8 @@ final class ContactSync {
     }
 
     private func scheduleSync() {
-        guard enabled, isAuthorized, let link, link.security == .secure, !syncing else { return }
-        Task { await sync(full: link.watchStatus?.contactsGeneration != lastGeneration) }
+        guard enabled, isAuthorized, let link, link.security == .secure, awaitingGeneration == nil else { return }
+        start(full: link.watchStatus?.contactsGeneration != lastGeneration)
     }
 
     func refreshAvailable() async {
@@ -102,10 +121,9 @@ final class ContactSync {
     }
 
     private func sync(full: Bool) async {
-        guard let link, link.security == .secure else { return }
-        syncing = true
-        progress = 0
         defer { syncing = false }
+        guard let link, link.security == .secure else { return }
+        progress = 0
         await refreshAvailable()
         let contacts = available
         var newDigests: [String: String] = [:]
@@ -143,6 +161,8 @@ final class ContactSync {
 
         // If the watch doesn't commit it (link lost mid-way), its generation won't match next time and we resync fully.
         lastGeneration = generation
+        awaitingGeneration = generation
+        awaitingDeadline = Date().addingTimeInterval(30)
         UserDefaults.standard.set(Int(generation), forKey: "contacts.generation")
         digests = newDigests
         Self.saveDigests(newDigests)

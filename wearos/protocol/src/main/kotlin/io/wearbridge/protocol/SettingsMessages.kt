@@ -35,6 +35,8 @@ data class AppEntry(
     val logo: String,
     /** The watch already holds an App Store icon for this app (so the iPhone needn't send it again). */
     val hasIcon: Boolean = false,
+    /** Seen only as a media player (Now Playing), never in a notification: the iPhone fetches its icon but hides it from notification settings. */
+    val mediaOnly: Boolean = false,
 )
 
 /** Watch-wide preferences. [popupStyle] uses [PopupCode]. */
@@ -62,7 +64,7 @@ object SettingsCodec {
         for (a in s.apps) {
             str(a.bundleId)
             str(a.name)
-            u8(flags(a.enabled, a.vibrate, a.hiddenByDefault) or (if (a.hasIcon) 8 else 0))
+            u8(flags(a.enabled, a.vibrate, a.hiddenByDefault) or (if (a.hasIcon) 8 else 0) or (if (a.mediaOnly) 16 else 0))
             u8(tri(a.hideContent))
             u32(a.color)
             str(a.logo)
@@ -81,7 +83,7 @@ object SettingsCodec {
             val hide = untri(r.u8())
             val color = r.u32()
             val logo = r.str()
-            AppEntry(bundleId, name, f and 1 != 0, f and 2 != 0, hide, f and 4 != 0, color, logo, f and 8 != 0)
+            AppEntry(bundleId, name, f and 1 != 0, f and 2 != 0, hide, f and 4 != 0, color, logo, f and 8 != 0, f and 16 != 0)
         }
         val prefs = if (r.remaining >= 2) decodePrefsFields(r.u8(), r.u8()) else null
         return SettingsSnapshot(mode, apps, prefs)

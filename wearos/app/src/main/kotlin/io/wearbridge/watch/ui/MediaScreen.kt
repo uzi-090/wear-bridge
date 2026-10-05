@@ -1,7 +1,8 @@
 package io.wearbridge.watch.ui
 
 import android.os.SystemClock
-import androidx.compose.foundation.background
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
@@ -97,7 +98,9 @@ private fun Player(np: NowPlaying) {
     val haptics = LocalHapticFeedback.current
     val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
     val app = remember(np.playerName, seen) { AppCatalog.forPlayerName(np.playerName, seen) }
-    val palette = remember(app.color) { MediaPalette.from(Color(app.color)) }
+    // Only a known app has a real brand colour; otherwise stay neutral rather than inventing one.
+    val known = app.bundleId != null || app.logo != null
+    val palette = remember(app.color, known) { if (known) MediaPalette.from(Color(app.color)) else MediaPalette.NEUTRAL }
     val volume = rememberVolume(np)
     var volumeChangedAt by remember { mutableLongStateOf(0L) }
     val reduceMotion = rememberReduceMotion()
@@ -126,67 +129,83 @@ private fun Player(np: NowPlaying) {
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.radialGradient(listOf(palette.glow, Color.Black), radius = 520f))
+            .drawBehind {
+                // A soft wash of the app's colour from the top edge, fading to pure black (OLED) by mid-screen.
+                if (palette.glow != Color.Transparent) {
+                    drawRect(Brush.radialGradient(listOf(palette.glow, Color.Transparent), center = Offset(size.width / 2, 0f), radius = size.height * 0.75f))
+                }
+            }
             .volumeRotary { up ->
                 volume.step(up)
                 volumeChangedAt = SystemClock.elapsedRealtime()
             },
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.fillMaxSize().padding(top = 34.dp, bottom = 18.dp, start = 26.dp, end = 26.dp),
-        ) {
-            // The playing app: its logo (App Store icon when the watch has one) and name.
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AppBadge(app, size = 18.dp)
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    app.name,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color.White.copy(alpha = 0.72f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+        // Equal weights above and below keep the controls exactly on the screen's centre line.
+        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxSize()) {
+            Box(
+                Modifier.weight(1f).fillMaxWidth().padding(start = 34.dp, end = 34.dp, bottom = 6.dp),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        np.title.ifBlank { "Unknown title" },
+                        style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                        color = Color.White,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = if (reduceMotion) TextOverflow.Ellipsis else TextOverflow.Clip,
+                        modifier = Modifier.fillMaxWidth().then(if (reduceMotion) Modifier else Modifier.basicMarquee(iterations = 2)),
+                    )
+                    if (np.artist.isNotBlank()) {
+                        Text(
+                            np.artist,
+                            style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
+                            color = Color.White.copy(alpha = 0.66f),
+                            textAlign = TextAlign.Center,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                np.title.ifBlank { "Unknown title" },
-                style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
-                color = Color.White,
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = if (reduceMotion) TextOverflow.Ellipsis else TextOverflow.Clip,
-                modifier = Modifier.fillMaxWidth().then(if (reduceMotion) Modifier else Modifier.basicMarquee(iterations = 2)),
-            )
-            Text(
-                np.artist.ifBlank { " " },
-                style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
-                color = Color.White.copy(alpha = 0.66f),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Spacer(Modifier.weight(1f))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SkipButton(R.drawable.ic_skip_previous, "Previous", np.can(RemoteCommand.PREVIOUS_TRACK)) { send(RemoteCommand.PREVIOUS_TRACK) }
                 PlayPause(np, now, palette) { send(RemoteCommand.TOGGLE_PLAY_PAUSE) }
                 SkipButton(R.drawable.ic_skip_next, "Next", np.can(RemoteCommand.NEXT_TRACK)) { send(RemoteCommand.NEXT_TRACK) }
             }
-            Spacer(Modifier.weight(1f))
-            Text(
-                when {
-                    showVolume -> "Volume ${volume.percentText}"
-                    np.durationSeconds > 0 -> "${clock(np.positionSeconds(now))} / ${clock(np.durationSeconds)}"
-                    else -> ""
-                },
-                style = MaterialTheme.typography.labelSmall,
-                color = if (showVolume) palette.accent else Color.White.copy(alpha = 0.6f),
-                maxLines = 1,
-            )
+            Box(Modifier.weight(1f).fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.TopCenter) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        when {
+                            showVolume -> "Volume ${volume.percentText}"
+                            np.durationSeconds > 0 -> "${clock(np.positionSeconds(now))} / ${clock(np.durationSeconds)}"
+                            else -> " "
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (showVolume) palette.accent else Color.White.copy(alpha = 0.6f),
+                        maxLines = 1,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    // The playing app: its official icon when the iPhone has sent one, else its logo or initial.
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (app.bundleId != null || app.logo != null) {
+                            AppBadge(app, size = 16.dp)
+                            Spacer(Modifier.width(5.dp))
+                        }
+                        Text(
+                            app.name,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White.copy(alpha = 0.72f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
         if (showVolume) {
             LevelIndicator(value = { volume.fraction }, modifier = Modifier.align(Alignment.CenterStart))
@@ -242,8 +261,10 @@ private class MediaPalette(val accent: Color, val onAccent: Color, val glow: Col
         fun from(brand: Color): MediaPalette {
             val accent = if (brand.luminance() < 0.08f) lerp(brand, Color.White, 0.7f) else brand
             val onAccent = if (accent.luminance() > 0.45f) Color.Black else Color.White
-            return MediaPalette(accent, onAccent, accent.copy(alpha = 0.22f))
+            return MediaPalette(accent, onAccent, accent.copy(alpha = 0.18f))
         }
+
+        val NEUTRAL = MediaPalette(Color(0xFFE6E6EB), Color.Black, Color.Transparent)
     }
 }
 

@@ -52,7 +52,7 @@ class SettingsChannel(
     init {
         scope.launch {
             combine(
-                policy.mode, policy.rules, policy.seenApps, icons.version,
+                policy.mode, policy.rules, combine(policy.seenApps, policy.mediaApps) { a, b -> a to b }, icons.version,
                 combine(settings.popupStyle, settings.history, settings.endCallFromWatch) { _, _, _ -> },
             ) { _, _, _, _, _ -> }.drop(1).collect { schedulePush() }
         }
@@ -108,7 +108,9 @@ class SettingsChannel(
                 }
                 MessageType.SET_APP_ICON -> {
                     val (bundleId, image) = SettingsCodec.decodeSetAppIcon(message.payload)
-                    if (bundleId !in policy.seenApps.value) return DiagLog.w("settings: icon for unknown app ignored")
+                    if (bundleId !in policy.seenApps.value && bundleId !in policy.mediaApps.value) {
+                        return DiagLog.w("settings: icon for unknown app ignored")
+                    }
                     val ok = icons.save(bundleId, image)
                     DiagLog.i("settings: icon app=$bundleId ${image.size}B saved=$ok")
                 }
@@ -161,6 +163,9 @@ class SettingsChannel(
                     logo = info.logo.orEmpty(),
                     hasIcon = icons.has(info.bundleId),
                 )
+            } + policy.mediaApps.value.filterKeys { it !in policy.seenApps.value }.map { (id, name) ->
+                val info = AppCatalog.resolve(id, name, Category.ENTERTAINMENT)
+                AppEntry(id, info.name, true, true, null, false, info.color, info.logo.orEmpty(), icons.has(id), mediaOnly = true)
             }
         val prefs = WatchPrefs(
             popupStyle = if (settings.popupStyle.value == PopupStyle.SUBTLE) PopupCode.SUBTLE else PopupCode.STANDARD,

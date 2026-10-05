@@ -40,7 +40,7 @@ struct NotificationSettingsView: View {
                     }
 
                     Section {
-                        ForEach(settings.apps) { app in
+                        ForEach(settings.apps.filter { !$0.mediaOnly }) { app in
                             NavigationLink {
                                 AppRuleView(link: link, appId: app.id)
                             } label: {

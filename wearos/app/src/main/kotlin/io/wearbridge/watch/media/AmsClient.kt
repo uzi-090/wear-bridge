@@ -59,6 +59,10 @@ class AmsClient(
             }
             if (!r.ok) return false
         }
+        // iOS doesn't reliably send current values on registration (seen on hardware: sometimes the track
+        // arrived without the player name, sometimes nothing at all after a reconnect while paused). Read
+        // them directly once, so the screen is complete straight away. Later changes arrive as updates.
+        for ((entity, attribute) in INITIAL_READS) fetchFull(entity, attribute)
         return true
     }
 
@@ -68,8 +72,16 @@ class AmsClient(
             AmsUuids.REMOTE_COMMAND -> publish(state.copy(supported = AmsCommands.parseSupported(value)))
             AmsUuids.ENTITY_UPDATE -> {
                 val u = EntityUpdate.parse(value) ?: return true
+                if (u.entity == EntityId.PLAYER && u.attribute == PlayerAttribute.NAME) {
+                    // The playing app's display name (not personal data): needed to verify logo matching.
+                    io.wearbridge.watch.diagnostics.DiagLog.i("ams player name='${u.value}' truncated=${u.truncated}")
+                }
                 publish(state.apply(u, SystemClock.elapsedRealtime()))
                 if (u.truncated && u.attribute in FETCH_FULL[u.entity].orEmpty()) fetchFull(u.entity, u.attribute)
+                // A new track with no known player name: the app may have changed, so read the name again.
+                if (u.entity == EntityId.TRACK && u.attribute == TrackAttribute.TITLE && state.playerName.isBlank()) {
+                    fetchFull(EntityId.PLAYER, PlayerAttribute.NAME)
+                }
             }
             else -> return false
         }
@@ -98,6 +110,9 @@ class AmsClient(
         }
         if (!selected.ok) return
         val full = gatt.readValue(queue, ea) ?: return
+        if (entity == EntityId.PLAYER && attribute == PlayerAttribute.NAME) {
+            io.wearbridge.watch.diagnostics.DiagLog.i("ams player name read='${full.toString(Charsets.UTF_8)}'")
+        }
         publish(state.withFullValue(entity, attribute, full.toString(Charsets.UTF_8), SystemClock.elapsedRealtime()))
     }
 
@@ -107,6 +122,14 @@ class AmsClient(
     }
 
     private companion object {
+        val INITIAL_READS = listOf(
+            EntityId.PLAYER to PlayerAttribute.NAME,
+            EntityId.PLAYER to PlayerAttribute.PLAYBACK_INFO,
+            EntityId.PLAYER to PlayerAttribute.VOLUME,
+            EntityId.TRACK to TrackAttribute.TITLE,
+            EntityId.TRACK to TrackAttribute.ARTIST,
+            EntityId.TRACK to TrackAttribute.DURATION,
+        )
         val FETCH_FULL = mapOf(
             EntityId.TRACK to setOf(TrackAttribute.TITLE, TrackAttribute.ARTIST, TrackAttribute.ALBUM),
             EntityId.PLAYER to setOf(PlayerAttribute.NAME),
