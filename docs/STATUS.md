@@ -10,16 +10,16 @@ _Last updated: 2026-10-05, session 2._
 | 2 Actions / calls | ✅ Answer (167 ms) / Decline (115 ms) from the watch. **End Call** via undocumented ANCS category 12 (experimental setting, off by default). Call audio stays on the iPhone (expected) |
 | 3 Reconnection | 🟡 App restart ✅, BT toggle ✅. **Not run:** watch reboot, iPhone reboot, out-of-range walk, force-quit iOS app, locked iPhone (TEST_PLAN.md M1) |
 | 4 Watch notification UI | ✅ Logos/icons, filtering, masking, pop-up styles, **conversation grouping, watch-only delete / clear all, opt-in 24 h history, RTL-aware text** (checked on hardware with fake data) |
-| Media (AMS) | ✅ **Verified**: play/pause, next/previous, volume; Wear OS-style volume screen (stepper + edge level + bezel) |
+| Media (AMS) | ✅ **Verified** with YouTube Music and Apple Music: app icon + brand palette, round layout, play/pause/skip, bezel volume (one click = one iOS step), progress ring |
 | iPhone battery / model | ✅ **Verified**: Battery Service + Device Information read straight from iOS |
 | 5 iOS companion | ✅ Rebuilt: onboarding, home (watch battery, notifications, last sync), Find Watch, Calls, Music & Media, Settings (pop-ups, history, End Call), Diagnostics, guide, About. Installed on the iPhone; the on-screen walk-through is pending (M2.5, M2.12) |
 | 9 Find phone / watch | ✅ **Verified**: Find iPhone (foreground, locked, force-quit = honest "can't reach") and Find watch |
 | 10 Security (app layer) | ✅ **Verified**: app-level pairing approved on the watch, every bridge message sealed (AES-GCM, replay-safe). Cross-platform test vectors from CryptoKit |
-| 6 Contacts | 🟡 In progress (protocol codec written) |
+| 6 Contacts | ✅ **Verified**: 957 contacts synced, encrypted on the watch; search, favorites. "Call from iPhone" built, test pending (M2.15) |
 | 7 HFP research, 8 health, 11 store prep | ⏸ Not started |
 
 ## Next steps
-1. Finish Phase 6 contacts (encrypted, incremental).
+1. M2.15 (Call from iPhone), M2.10–M2.12.
 2. Run the open M1 reliability tests (reboots, out of range, locked iPhone) and M2.10–M2.12.
 3. iPhone diagnostics log: `xcrun devicectl device copy from --device <UDID> --domain-type appDataContainer --domain-identifier io.wearbridge.pairingpoc --source Library/Caches/diagnostics.log --destination <file>`.
 

@@ -75,6 +75,9 @@ wearos/
     media/         AmsClient – Now Playing + remote commands (started after ANCS is READY)
     bridge/        SettingsChannel (rules, prefs, icons), DeviceChannel (CONTROL, EVENTS, DEVICE_STATUS)
     find/          FindWatchAlert (alarm + vibration), Find iPhone / Find watch screens
+    contacts/      ContactsStore (encrypted file), ContactsChannel (staged sync), contacts screens
+    security/      IdentityStore (Keystore-wrapped EC key, allowed iPhone apps), SecureLink (AUTH,
+                   per-connection sessions), ApprovalNotifier
     notifications/ NotificationEngine (policy: reconnect grace, coalescing, quota, action gating),
                    NotificationRepository (StateFlows, conversation threads, watch-only delete,
                    opt-in 24 h history), MirrorNotifier (native Wear OS notifications)
@@ -161,11 +164,14 @@ SwiftUI + Observation + CoreBluetooth, Swift 6 strict concurrency, no third-part
 | `FeatureViews` | Find Watch, Calls (works / not available, experimental End Call), Media info, Settings, Diagnostics, guide, About |
 | `NotificationSettingsView` | Filter mode, pop-up style, history, per-app rules |
 | `FindMyPhone` | Foreground looping sound / background alert with a bundled sound |
-| `AppIconService` | Official icons from Apple's App Store lookup (bundle IDs only) |
+| `AppIconService` | Official icons from Apple's App Store lookup (bundle IDs only), also for media-only apps |
+| `BridgeCrypto` | Identity key (Keychain), watch-key pinning, HELLO, sealed sessions |
+| `ContactSync`, `ContactsView` | Contacts framework → digests → sealed incremental sync; favorites |
+| `DiagFile` | The redacted diagnostics lines, also in `Library/Caches/diagnostics.log` for devicectl |
 
 The iPhone app never reads notifications. If it's closed or deleted, notifications, calls, media and
 the iPhone battery still work, because those go straight from iOS to the watch.
-*(planned)* AccessorySetupKit picker, contacts and health.
+*(planned)* AccessorySetupKit picker and health.
 
 ## 7. Custom bridge protocol (see `BLE_PROTOCOL.md`)
 Service `9C664C93-19F2-435D-895A-A40751731AE1`. Characteristics are derived by changing the 4th group

@@ -119,13 +119,14 @@ Google Play review risk (L/M/H).
 | Capability | Status | Path | API | Permission | Background | Notes |
 |---|---|---|---|---|---|---|
 | Contact permission | ✅ FULL | iOS | `CNContactStore.requestAccess(for:)`; iOS 18+ may return `.limited` | `NSContactsUsageDescription` | — | Limited access is respected. |
-| Import | ✅ FULL | B | `CNContactStore.enumerateContacts` | Contacts | iOS app foreground/BLE wake | Minimal fields only. |
-| Incremental sync | 🟡 LIMITED | B | Per-contact digest diff stored on iOS (portable). `CNContactStoreDidChange` triggers it while the app is alive | | App must run | Change-history API to be evaluated later. |
-| Search | ✅ FULL | W | Room FTS on the watch | — | — | |
+| Import | ✅ FULL (**verified**, 957 contacts) | B | `CNContactStore.enumerateContacts`: name, normalized de-duplicated phones, ≤ 3 emails | Contacts (explained first; iOS 18 limited access respected) | iOS app foreground/BLE wake | Sealed over CONTACTS. |
+| Incremental sync | 🟡 LIMITED (implemented) | B | Per-contact SHA-256 digests on iOS; watch generation in STATUS; `CNContactStoreDidChange` while the app is alive | | App must run | Full resync on any mismatch. |
+| Search | ✅ FULL (implemented) | W | In-memory search by name or digits, Wear keyboard via RemoteInput | — | — | |
 | Caller identification | 🟡 LIMITED | A | iOS already resolves names in ANCS. The local DB adds a photo/initials | | | |
-| Favorites | 🟡 LIMITED | B | No public "Phone favourites" API. **Alternative:** the user picks favourites in our app | | | |
-| Offline contact cache | ✅ FULL | W | Room, encrypted at rest (Keystore-wrapped key) | | | |
-| Photos | 🟡 LIMITED | B | `thumbnailImageData` | | | Sent once per hash change. Optional. |
+| Favorites | 🟡 LIMITED (implemented) | B | No public "Phone favourites" API. **Alternative:** the user picks favourites in our app | | | Shown first on the watch. |
+| Offline contact cache | ✅ FULL (implemented) | W | One file, AES-256-GCM with an Android Keystore key, no-backup storage, atomic writes | | | |
+| Photos | ⏸ Not implemented | B | `thumbnailImageData` | | | Initials avatars for now. |
+| Call from watch | 🟠 BEST EFFORT (implemented) | B | CALL_REQUEST → iPhone app opens `tel:` (iOS confirms) or posts a notification | Notifications | iOS app alive | Honest: "Confirm the call on your iPhone". |
 
 ## 5. Device
 

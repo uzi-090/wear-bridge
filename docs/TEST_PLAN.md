@@ -79,6 +79,9 @@ locked iPhone and iMessage are unverified. Run them before any release build.
 | M2.10 | iPhone app → Notifications → Keep history on, clear a message on the iPhone | It stays on the watch, dimmed, "Cleared on iPhone", for 24 h | Not run | ⏸ |
 | M2.11 | Delete a notification on the watch, toggle watch Bluetooth | It doesn't come back after the replay | Not run | ⏸ |
 | M2.13 | App-level pairing: install the security build on both | Watch asks "Allow iPhone app?" with the code the iPhone shows; after Allow, sealed traffic flows; a reinstall of the iPhone app reconnects without asking again | **✔ 2026-10-05:** approval → session in 11 s; reinstall → `session established` with no prompt. Stale frames from an old session were rejected by the iPhone, as designed | ✔ |
+| M2.14 | iPhone → Contacts → Allow → Sync on | Contacts appear on the watch, sealed; one full sync, then incremental | **✔ 2026-10-05:** 957 contacts committed. Found + fixed: two status pushes started repeated full syncs | ✔ |
+| M2.15 | Watch → Contacts → a number → Call from iPhone | iPhone offers the call | Not run | ⏸ |
+| M2.16 | Now playing with YouTube Music and Apple Music | Right app icon/name/colours, title, artist, progress, time | **✔** after fixes: explicit AMS reads (iOS skipped current values), duration re-read per track, ring no longer frozen; YouTube Music's App Store icon fetched by the iPhone (4.7 KB) | ✔ |
 | M2.12 | Onboarding on a fresh install | Bluetooth prompt only after step 2, live ✓ on step 4 | Not run | ⏸ |
 
 ## Later phases (integration matrix)
