@@ -36,9 +36,9 @@
 | M1.7 | Send a WhatsApp message (1:1 and group) | As above. Record which action labels iOS exposes | 1:1 ✔: 3 messages at **194 / 73 / 98 ms**. App name `WhatsApp` came via Get App Attributes. Timestamp from iOS. **Only action: negative "Clear"** (no reply / mark-read). Group: pending | ✔ (1:1) |
 | M1.8 | Clear the notification on the iPhone | Disappears from the watch | | |
 | M1.9 | Tap the iOS-labelled negative action (e.g. "Clear") on the watch | Removed on the iPhone | | |
-| M1.10 | Get a **real cellular call** | Full-screen call surface with iOS's labels (record them verbatim) | | |
+| M1.10 | Get a **real cellular call** | Full-screen call surface with iOS's labels (record them verbatim) | Call reached the watch in **88–104 ms**. 1st attempt: the surface **never appeared** (Android's 50-per-app quota was full from the replay, fix e14aa6d). `USE_FULL_SCREEN_INTENT` is **denied by default** on Wear OS 6, so the call falls back to a heads-up notification with iOS's actions. Labels: pending (now logged) | partial |
 | M1.11 | Tap the label iOS gives for declining | The call is declined on the iPhone | | |
-| M1.12 | Call again, tap the label iOS gives for answering | The call is answered on the iPhone. **Record where the audio goes** | | |
+| M1.12 | Call again, tap the label iOS gives for answering | The call is answered on the iPhone. **Record where the audio goes** | **✔ 2026-10-05:** tapped Answer on the watch, the ANCS positive action succeeded in **167 ms**, and the call connected. **Audio stayed on the iPhone** (as predicted: control ≠ audio). Answering on the iPhone removed the watch's call notification at the same moment | ✔ |
 | M1.13 | Missed call | MissedCall notification. Record its labels | | |
 | M1.14 | iPhone locked vs unlocked, for M1.6 | Record any difference in content (the *Show Previews* setting) | | |
 | M1.15 | Force-quit PairingPOC, then repeat M1.6 | Still works (ANCS doesn't need the app) | | |

@@ -75,7 +75,7 @@ class MirrorNotifier(private val context: Context) {
         // The channel (importance) follows iOS's own Silent flag and stays stable across updates.
         // [alert] only decides whether this particular post buzzes.
         val channel = when {
-            n.isIncomingCall -> CHANNEL_CALLS
+            n.isIncomingCall || n.isActiveCall -> CHANNEL_CALLS
             a.flags and EventFlags.SILENT != 0 -> CHANNEL_QUIET
             else -> CHANNEL_ALERT
         }
@@ -101,6 +101,8 @@ class MirrorNotifier(private val context: Context) {
                 .setPriority(NotificationCompat.PRIORITY_MAX)
                 .setOngoing(true)
                 .setFullScreenIntent(callIntent(), true)
+        } else if (n.isActiveCall) {
+            builder.setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true)
         } else {
             builder.setPriority(if (channel == CHANNEL_ALERT) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
         }

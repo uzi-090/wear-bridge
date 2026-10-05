@@ -331,7 +331,8 @@ class BridgeController(
             // Reconnect grace: never buzz for replayed (pre-existing) notifications, and coalesce bursts.
             val elapsed = SystemClock.elapsedRealtime()
             val isNew = event.eventId == EventId.ADDED && !event.isPreExisting
-            val alert = !event.isSilent && (isNew || wn.isIncomingCall && !event.isPreExisting) &&
+            // A connected call is a state change the user just caused, not news: never buzz for it.
+            val alert = !wn.isActiveCall && !event.isSilent && (isNew || wn.isIncomingCall && !event.isPreExisting) &&
                 (wn.isIncomingCall || elapsed - lastAlertAt > ALERT_COALESCE_MS)
             if (alert) lastAlertAt = elapsed
             // Replayed (pre-existing) notifications go to the in-app inbox only. Posting them all
@@ -339,6 +340,10 @@ class BridgeController(
             val surface = !event.isPreExisting || wn.isIncomingCall || notifier.isPosted(notification.uid)
             if (surface) notifier.show(wn, alert)
 
+            if (notification.category in CALL_CATEGORIES) {
+                // System call-UI labels (e.g. "Answer"), not user content. Logged to verify action semantics.
+                DiagLog.i("call actions cat=${notification.category} positive=${notification.positiveActionLabel} negative=${notification.negativeActionLabel}")
+            }
             val latency = sourceArrival.remove(notification.uid)?.let { elapsed - it }
             DiagLog.i(
                 "notif ${event.eventId} app=${notification.appIdentifier} cat=${notification.category} " +
@@ -448,6 +453,11 @@ class BridgeController(
     }
 
     private companion object {
+        val CALL_CATEGORIES = setOf(
+            io.wearbridge.ancs.Category.INCOMING_CALL,
+            io.wearbridge.ancs.Category.MISSED_CALL,
+            io.wearbridge.ancs.Category.ACTIVE_CALL,
+        )
         const val ALERT_COALESCE_MS = 1_500L
         const val STALE_PURGE_MS = 5_000L
     }

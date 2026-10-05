@@ -37,6 +37,13 @@ enum class Category(val code: Int) {
     LOCATION(10),
     ENTERTAINMENT(11),
 
+    /**
+     * Not in Apple's published ANCS spec. Observed on hardware (iOS on iPhone 16 Pro, 2026-10-05):
+     * posted by com.apple.mobilephone while a call is connected, removed when it ends, with flags
+     * Important + NegativeAction. The meaning of its action is still being verified.
+     */
+    ACTIVE_CALL(12),
+
     /** A category ID this build doesn't know about (reserved values). */
     UNKNOWN(-1);
 

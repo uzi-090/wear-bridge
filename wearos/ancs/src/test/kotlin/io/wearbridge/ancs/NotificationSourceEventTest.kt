@@ -45,6 +45,13 @@ class NotificationSourceEventTest {
     }
 
     @Test
+    fun `observed active-call category 12 is recognised`() {
+        val e = NotificationSourceEvent.parse(bytes(0, 0x12, 12, 1, 5, 0, 0, 0))!!
+        assertEquals(Category.ACTIVE_CALL, e.category)
+        assertTrue(e.isImportant && e.hasNegativeAction)
+    }
+
+    @Test
     fun `short packet is rejected, longer packet tolerated`() {
         assertNull(NotificationSourceEvent.parse(bytes(0, 0, 0, 0, 1, 0, 0)))
         assertEquals(1L, NotificationSourceEvent.parse(bytes(0, 0, 0, 0, 1, 0, 0, 0, 0xAA))!!.uid)

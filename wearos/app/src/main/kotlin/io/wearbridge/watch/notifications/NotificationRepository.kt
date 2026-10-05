@@ -18,6 +18,7 @@ data class WatchNotification(
     val uid: Long get() = ancs.uid
     val appLabel: String get() = ancs.appDisplayName ?: AppLabels.fallback(ancs.appIdentifier)
     val isIncomingCall: Boolean get() = ancs.category == Category.INCOMING_CALL
+    val isActiveCall: Boolean get() = ancs.category == Category.ACTIVE_CALL
     val hasActions: Boolean get() = ancs.positiveActionLabel != null || ancs.negativeActionLabel != null
 
     /** The iPhone's timestamp, interpreted in the watch's zone (ANCS carries none). */

@@ -63,5 +63,10 @@ ANCS ATT errors: `0xA0` Unknown command, `0xA1` Invalid command, `0xA2` Invalid 
 6. **Session reset** on disconnect: clear the queue, reassembler and UID map, and keep the app-name cache.
 7. Request an MTU of 185 after connecting (iOS typically grants 185). The parser is MTU-agnostic.
 
-## Tested behaviour
-*None yet. Fill this in from TEST_PLAN.md §M1 results.*
+## Tested behaviour (iPhone 16 Pro ↔ Galaxy Watch4 Classic LTE, 2026-10-05)
+- **ANCS is discoverable before bonding** (it's in the GATT database). Its characteristics still need the bond.
+- **Latency** from the Notification Source event to the notification posted on the watch: 71–194 ms for new notifications.
+- **Replay on subscribe:** iOS sends every existing notification flagged `PreExisting`. Fetching costs about 0.6 s per notification, serially (16–50 notifications ⇒ 10–30 s). Fresh events must jump the backlog. Note: one reconnect replayed nothing at all (cause unknown, under investigation).
+- **WhatsApp (Social):** only a negative action, labelled **"Clear"**.
+- **Incoming call (`com.apple.mobilephone`, Category 1):** a positive action **answers the cellular call** on the iPhone. The audio stays on the iPhone route. The call notification is `Removed` as soon as it's answered (on either device).
+- **Undocumented Category 12:** posted by `com.apple.mobilephone` right after a call connects, with flags `0x12` (Important | NegativeAction), and removed when the call ends. It looks like an "active call" notification. *Its negative action label and effect (End Call?) are being verified.*
