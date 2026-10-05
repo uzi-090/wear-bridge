@@ -3,7 +3,11 @@
 > Status: **Phase 1**. Link-layer security only. App-layer encryption is designed in `BLE_PROTOCOL.md` (Phase 10).
 
 ## Principles
-- Everything is local. No servers, no analytics, no telemetry.
+- Everything is local. No servers, no analytics, no telemetry. **Sole network call:** the iPhone app asks
+  Apple's App Store lookup (`itunes.apple.com/lookup`, HTTPS) for app icons by bundle ID. That reveals to Apple
+  which apps notify the watch (no content, names or identifiers). Cached on the iPhone, so each app is looked up once.
+- Icons received by the watch are size- and format-checked (≤ 32 KB, 16–256 px, decodable) and stored in
+  app-private storage under a sanitised file name.
 - Minimum permissions on both platforms.
 - Notification text, contact names, phone numbers, health values and keys are **never logged**.
   All diagnostics go through `Redact` / `DiagLog`.

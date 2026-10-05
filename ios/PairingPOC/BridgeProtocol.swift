@@ -10,6 +10,7 @@ enum BridgeProtocol {
         case getSettings = 0x01
         case setAppRule = 0x02
         case setMode = 0x03
+        case setAppIcon = 0x04
         case settings = 0x81
     }
 
@@ -102,6 +103,8 @@ struct WatchApp: Identifiable, Equatable {
     var hiddenByDefault: Bool
     var color: UInt32
     var logo: String
+    /** The watch already has an App Store icon for this app. */
+    var hasIcon: Bool
 
     var hidesContent: Bool { hideContent ?? hiddenByDefault }
 
@@ -131,7 +134,8 @@ enum SettingsCodec {
             let color = try r.u32()
             let logo = try r.str()
             apps.append(WatchApp(id: id, name: name, enabled: flags & 1 != 0, vibrate: flags & 2 != 0,
-                                 hideContent: hide, hiddenByDefault: flags & 4 != 0, color: color, logo: logo))
+                                 hideContent: hide, hiddenByDefault: flags & 4 != 0, color: color, logo: logo,
+                                 hasIcon: flags & 8 != 0))
         }
         return WatchSettings(mode: mode, apps: apps)
     }
@@ -142,6 +146,8 @@ enum SettingsCodec {
     }
 
     static func encodeSetMode(_ mode: FilterMode) -> [UInt8] { [mode.rawValue] }
+
+    static func encodeSetAppIcon(bundleId: String, image: Data) -> [UInt8] { str(bundleId) + [UInt8](image) }
 
     private static func tri(_ v: Bool?) -> UInt8 { v == nil ? 2 : (v! ? 1 : 0) }
 

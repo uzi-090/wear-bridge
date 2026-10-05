@@ -129,6 +129,24 @@ final class WatchLink: NSObject {
 
     func refreshSettings() { send(.getSettings, []) }
 
+    @ObservationIgnored private var iconsSentThisConnection: Set<String> = []
+
+    /// Sends official App Store icons for apps the watch doesn't have one for yet.
+    private func syncIcons() {
+        guard let apps = watchSettings?.apps else { return }
+        let service = AppIconService.shared
+        let needed = apps.filter { !$0.hasIcon && service.isLookupable($0.id) && !iconsSentThisConnection.contains($0.id) }
+        guard !needed.isEmpty else { return }
+        needed.forEach { iconsSentThisConnection.insert($0.id) }
+        Task { @MainActor in
+            for app in needed {
+                guard let jpeg = await service.icon(for: app.id) else { continue }
+                send(.setAppIcon, SettingsCodec.encodeSetAppIcon(bundleId: app.id, image: jpeg))
+                note("icon sent (\(jpeg.count) bytes)")
+            }
+        }
+    }
+
     private func send(_ type: BridgeProtocol.MessageType, _ payload: [UInt8]) {
         guard let p = peripheral, let c = settingsCharacteristic, p.state == .connected else { return }
         nextMessageId &+= 1
@@ -224,6 +242,7 @@ final class WatchLink: NSObject {
             do {
                 watchSettings = try SettingsCodec.decodeSnapshot(message.payload)
                 note("settings: \(watchSettings?.apps.count ?? 0) apps")
+                syncIcons()
             } catch {
                 note("settings: malformed snapshot")
             }
@@ -305,6 +324,7 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
     ) {
         note("disconnected autoReconnect=\(isReconnecting) code=\((error as NSError?)?.code ?? 0)")
         watchSettings = nil // only show what the watch confirms
+        iconsSentThisConnection.removeAll()
         settingsReassembler.reset()
         // Dropping mid-pairing is how a rejected pairing usually shows up.
         if phase == .pairing && !hasSavedWatch { pairingDidFail("link dropped during pairing") }

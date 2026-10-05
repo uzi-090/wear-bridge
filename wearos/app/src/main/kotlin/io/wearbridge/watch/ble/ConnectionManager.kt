@@ -57,7 +57,7 @@ class ConnectionManager(
     private val peripheral = BridgePeripheral(context, PeripheralListener())
     private val pairing = PairingManager(scope, onBonded = { dispatch(LinkEvent.Bonded) }, onFailed = { dispatch(LinkEvent.BondFailed) })
     private val reconnection = ReconnectionManager(scope) { dispatch(LinkEvent.RetryTimer) }
-    private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, scope)
+    private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, BridgeGraph.icons, scope)
 
     private var device: BluetoothDevice? = null
     private var session: GattSession? = null

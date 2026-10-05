@@ -5,6 +5,8 @@ object MessageType {
     const val GET_SETTINGS = 0x01
     const val SET_APP_RULE = 0x02
     const val SET_MODE = 0x03
+    /** str bundleId + image bytes (JPEG/PNG, ≤ 32 KB). The iPhone fetches official App Store icons. */
+    const val SET_APP_ICON = 0x04
     const val SETTINGS = 0x81
 }
 
@@ -29,6 +31,8 @@ data class AppEntry(
     val color: Long,
     /** Bundled logo slug, or "" for a monogram. */
     val logo: String,
+    /** The watch already holds an App Store icon for this app (so the iPhone needn't send it again). */
+    val hasIcon: Boolean = false,
 )
 
 data class SettingsSnapshot(val mode: Int, val apps: List<AppEntry>)
@@ -47,7 +51,7 @@ object SettingsCodec {
         for (a in s.apps) {
             str(a.bundleId)
             str(a.name)
-            u8(flags(a.enabled, a.vibrate, a.hiddenByDefault))
+            u8(flags(a.enabled, a.vibrate, a.hiddenByDefault) or (if (a.hasIcon) 8 else 0))
             u8(tri(a.hideContent))
             u32(a.color)
             str(a.logo)
@@ -65,7 +69,7 @@ object SettingsCodec {
             val hide = untri(r.u8())
             val color = r.u32()
             val logo = r.str()
-            AppEntry(bundleId, name, f and 1 != 0, f and 2 != 0, hide, f and 4 != 0, color, logo)
+            AppEntry(bundleId, name, f and 1 != 0, f and 2 != 0, hide, f and 4 != 0, color, logo, f and 8 != 0)
         }
         return SettingsSnapshot(mode, apps)
     }
@@ -81,6 +85,15 @@ object SettingsCodec {
         val bundleId = r.str()
         val f = r.u8()
         return SetAppRule(bundleId, f and 1 != 0, f and 2 != 0, untri(r.u8()))
+    }
+
+    fun encodeSetAppIcon(bundleId: String, image: ByteArray): ByteArray = Writer().apply { str(bundleId) }.bytes() + image
+
+    /** Returns bundle ID and image bytes. */
+    fun decodeSetAppIcon(bytes: ByteArray): Pair<String, ByteArray> {
+        val r = Reader(bytes)
+        val bundleId = r.str()
+        return bundleId to bytes.copyOfRange(r.position, bytes.size)
     }
 
     fun encodeSetMode(mode: Int): ByteArray = byteArrayOf(mode.toByte())
@@ -109,6 +122,7 @@ object SettingsCodec {
 
     private class Reader(private val b: ByteArray) {
         private var p = 0
+        val position: Int get() = p
         fun u8(): Int {
             require(p < b.size) { "truncated" }
             return b[p++].toInt() and 0xFF

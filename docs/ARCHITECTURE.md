@@ -8,7 +8,9 @@
    can't, and it shouldn't). Notification mirroring keeps working when the companion app is suspended,
    killed by the system, or not installed at all.
 2. **One Bluetooth LE link, two GATT directions.**
-3. **Everything stays local.** There's no backend, account, analytics or cloud.
+3. **Everything stays local.** There's no backend, account, analytics or cloud. **One exception, chosen by the user
+   (2026-10-05):** the iPhone app looks up official app icons on Apple's App Store lookup service, sending
+   only the bundle IDs of apps that notified the watch, only to Apple. Notification content never leaves the devices.
 4. **Honest capabilities.** Anything iOS doesn't expose is shown as unavailable, never faked
    (see `CAPABILITY_MATRIX.md`).
 

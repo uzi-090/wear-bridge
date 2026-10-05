@@ -22,7 +22,7 @@ class SampleNotificationReceiver : BroadcastReceiver() {
                 ?.let(BridgeGraph.settings::setPopupStyle)
         }
         if (intent.getBooleanExtra("style_only", false)) return
-        val uid = 900_000L + (System.currentTimeMillis() / 1000 % 1000)
+        val uid = intent.getLongExtra("uid", 900_000L + (System.currentTimeMillis() / 1000 % 1000))
         val sample = AncsNotification(
             uid = uid,
             category = Category.SOCIAL,

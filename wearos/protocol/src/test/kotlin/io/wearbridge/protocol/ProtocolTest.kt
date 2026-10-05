@@ -10,7 +10,7 @@ class ProtocolTest {
     private val snapshot = SettingsSnapshot(
         mode = ModeCode.MESSAGES_AND_CALLS,
         apps = listOf(
-            AppEntry("net.whatsapp.WhatsApp", "‎WhatsApp", true, true, null, false, 0xFF25D366, "whatsapp"),
+            AppEntry("net.whatsapp.WhatsApp", "‎WhatsApp", true, true, null, false, 0xFF25D366, "whatsapp", hasIcon = true),
             AppEntry("com.kotak811.x", "Kotak 811", true, false, null, true, 0xFFED1C24, ""),
             AppEntry("com.example.مرحبا", "تطبيق 🙂", false, true, true, false, 0xFF5B8DEF, ""),
         ),
@@ -26,6 +26,18 @@ class ProtocolTest {
         val rule = SetAppRule("net.whatsapp.WhatsApp", enabled = true, vibrate = false, hideContent = false)
         assertEquals(rule, SettingsCodec.decodeSetAppRule(SettingsCodec.encodeSetAppRule(rule)))
         assertEquals(ModeCode.CALLS_ONLY, SettingsCodec.decodeSetMode(SettingsCodec.encodeSetMode(ModeCode.CALLS_ONLY)))
+    }
+
+    @Test
+    fun `app icon message round-trips and splits`() {
+        val image = ByteArray(5_000) { (it * 31).toByte() }
+        val payload = SettingsCodec.encodeSetAppIcon("com.appflipkart.flipkart", image)
+        val (id, bytes) = SettingsCodec.decodeSetAppIcon(payload)
+        assertEquals("com.appflipkart.flipkart", id)
+        assertArrayEquals(image, bytes)
+        val r = Reassembler()
+        val done = Framing.split(MessageType.SET_APP_ICON, 3, payload, 290).map(r::accept).last() as Reassembler.Result.Complete
+        assertArrayEquals(payload, done.message.payload)
     }
 
     @Test

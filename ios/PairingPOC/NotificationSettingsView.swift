@@ -92,12 +92,26 @@ private struct AppRuleView: View {
     }
 }
 
-/// The same badge the watch shows: the bundled logo (or initial) in white on the app's brand colour.
+/// The app's official App Store icon when available, otherwise the same badge the watch shows
+/// (the bundled logo or initial, in white on the brand colour).
 struct AppBadge: View {
     let app: WatchApp
     let size: CGFloat
 
     var body: some View {
+        if let data = AppIconService.shared.icons[app.id], let image = UIImage(data: data) {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size, height: size)
+                .clipShape(RoundedRectangle(cornerRadius: size * 0.225, style: .continuous))
+                .accessibilityHidden(true)
+        } else {
+            badge
+        }
+    }
+
+    private var badge: some View {
         ZStack {
             Circle().fill(Color(argb: app.color))
             if !app.logo.isEmpty {

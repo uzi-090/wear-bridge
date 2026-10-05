@@ -17,3 +17,8 @@
 ## Generic glyphs
 - `glyph_phone.xml`, `glyph_hourglass.xml`: Material Icons ("call", "hourglass_full"), Apache License 2.0.
   Used for Apple system apps instead of Apple's logos.
+
+## App Store icons (runtime, iPhone app)
+- Fetched by the iPhone app from Apple's public App Store lookup (`artworkUrl100`), resized to 96 px and
+  sent to the watch. They're the apps' own official icons, which are their owners' trademarks and copyright.
+  Used only to identify the source app of a notification on the user's own devices. Review before any store release (R-13).

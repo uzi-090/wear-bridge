@@ -40,8 +40,19 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
 
     /** The app's monogram badge (see [AppCatalog]). Rendered once per app and cached. */
     private fun badge(app: io.wearbridge.watch.notifications.AppInfo): android.graphics.Bitmap = synchronized(badges) {
-        badges.getOrPut("${app.color}:${app.logo ?: app.initial}") {
+        val storeIcon = io.wearbridge.watch.BridgeGraph.icons.bitmap(app.bundleId)
+        badges.getOrPut("${app.bundleId}:${storeIcon?.generationId}:${app.color}:${app.logo ?: app.initial}") {
             val size = 96
+            if (storeIcon != null) {
+                // Circle-crop the App Store icon (they're rounded squares).
+                val out = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+                val c = android.graphics.Canvas(out)
+                val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG or android.graphics.Paint.FILTER_BITMAP_FLAG)
+                c.drawCircle(size / 2f, size / 2f, size / 2f, p)
+                p.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN)
+                c.drawBitmap(storeIcon, null, android.graphics.Rect(0, 0, size, size), p)
+                return@getOrPut out
+            }
             val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
             val canvas = android.graphics.Canvas(bmp)
             val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)

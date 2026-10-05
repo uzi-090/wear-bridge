@@ -94,7 +94,8 @@ fun NotificationDetailScreen(uid: Long) {
         TransformingLazyColumn(state = listState, contentPadding = padding) {
             val current = n
             if (current == null) {
-                item { Caption(Copy.CLEARED) }
+                // A header, not a caption: the first row on a round screen needs the header's edge-safe insets.
+                item { ListHeader { Text(Copy.CLEARED, textAlign = TextAlign.Center) } }
                 return@TransformingLazyColumn
             }
             val a = current.ancs

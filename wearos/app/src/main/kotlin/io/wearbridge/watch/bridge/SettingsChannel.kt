@@ -16,6 +16,7 @@ import io.wearbridge.watch.notifications.AppCatalog
 import io.wearbridge.watch.notifications.AppKind
 import io.wearbridge.watch.notifications.AppRule
 import io.wearbridge.watch.notifications.FilterMode
+import io.wearbridge.watch.settings.AppIconStore
 import io.wearbridge.watch.settings.PolicyStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -32,6 +33,7 @@ import kotlinx.coroutines.launch
 class SettingsChannel(
     private val peripheral: BridgePeripheral,
     private val policy: PolicyStore,
+    private val icons: AppIconStore,
     private val scope: CoroutineScope,
 ) {
     private val reassemblers = HashMap<String, Reassembler>()
@@ -41,7 +43,7 @@ class SettingsChannel(
 
     init {
         scope.launch {
-            combine(policy.mode, policy.rules, policy.seenApps) { _, _, _ -> }.drop(1).collect { schedulePush() }
+            combine(policy.mode, policy.rules, policy.seenApps, icons.version) { _, _, _, _ -> }.drop(1).collect { schedulePush() }
         }
     }
 
@@ -61,7 +63,7 @@ class SettingsChannel(
     }
 
     fun onChunk(device: BluetoothDevice, chunk: ByteArray) {
-        val reassembler = reassemblers.getOrPut(device.address) { Reassembler(maxMessageBytes = 4_096) }
+        val reassembler = reassemblers.getOrPut(device.address) { Reassembler(maxMessageBytes = 40 * 1024) }
         when (val r = reassembler.accept(chunk)) {
             Reassembler.Result.Incomplete -> Unit
             is Reassembler.Result.Error -> DiagLog.w("settings: ${r.reason}")
@@ -84,6 +86,12 @@ class SettingsChannel(
                     val mode = modeFromCode(SettingsCodec.decodeSetMode(message.payload)) ?: return DiagLog.w("settings: bad mode")
                     policy.setMode(mode)
                     DiagLog.i("settings: mode=$mode")
+                }
+                MessageType.SET_APP_ICON -> {
+                    val (bundleId, image) = SettingsCodec.decodeSetAppIcon(message.payload)
+                    if (bundleId !in policy.seenApps.value) return DiagLog.w("settings: icon for unknown app ignored")
+                    val ok = icons.save(bundleId, image)
+                    DiagLog.i("settings: icon app=$bundleId ${image.size}B saved=$ok")
                 }
                 else -> DiagLog.w("settings: unknown message type ${message.type}")
             }
@@ -125,6 +133,7 @@ class SettingsChannel(
                     hiddenByDefault = info.kind == AppKind.FINANCE,
                     color = info.color,
                     logo = info.logo.orEmpty(),
+                    hasIcon = icons.has(info.bundleId),
                 )
             }
         return SettingsSnapshot(modeToCode(policy.mode.value), apps)
