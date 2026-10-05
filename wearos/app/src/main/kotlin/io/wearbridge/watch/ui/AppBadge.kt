@@ -18,7 +18,7 @@ import io.wearbridge.watch.notifications.AppInfo
 
 /** The app's monogram badge: its initial on its accent colour. Decorative, since the name is always shown next to it. */
 @Composable
-fun AppBadge(app: AppInfo, size: Dp = 20.dp, modifier: Modifier = Modifier) {
+fun AppBadge(app: AppInfo, modifier: Modifier = Modifier, size: Dp = 20.dp) {
     Box(
         modifier
             .size(size)

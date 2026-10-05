@@ -157,7 +157,9 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         vibrator?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 60, 80, 60), -1))
     }
 
+    @android.annotation.SuppressLint("MissingPermission") // checked just below
     private fun post(n: WatchNotification, notification: android.app.Notification) {
+        if (!canPost) return
         synchronized(this) {
             posted.remove(n.uid)
             posted.add(n.uid)
