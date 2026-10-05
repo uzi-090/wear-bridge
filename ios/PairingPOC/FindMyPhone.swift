@@ -137,7 +137,38 @@ extension FindMyPhone: UNUserNotificationCenterDelegate {
 
     /// Tapping the notification means the user has the iPhone in hand.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        guard response.notification.request.identifier == "find-iphone" else { return }
-        await MainActor.run { FindMyPhone.shared.found() }
+        let id = response.notification.request.identifier
+        let phone = response.notification.request.content.userInfo["phone"] as? String
+        await MainActor.run {
+            if id == "find-iphone" { FindMyPhone.shared.found() }
+            if id == CallHandoff.notificationId, let phone { CallHandoff.dial(phone) }
+        }
+    }
+}
+
+/// "Call from iPhone" on the watch. iOS doesn't let apps place calls silently, so the iPhone offers the
+/// call and the user confirms it: directly if Bridge is open, otherwise through a notification.
+@MainActor
+enum CallHandoff {
+    static let notificationId = "call-request"
+
+    static func offer(phone: String, name: String) {
+        if UIApplication.shared.applicationState == .active {
+            dial(phone)
+            return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = name.isEmpty ? "Call from your watch" : "Call \(name)?"
+        content.body = "Tap to call from this iPhone."
+        content.sound = .default
+        content.userInfo = ["phone": phone]
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: notificationId, content: content, trigger: nil))
+    }
+
+    /// Opening tel: shows iOS's own call confirmation.
+    static func dial(_ phone: String) {
+        let digits = phone.filter { $0.isNumber || $0 == "+" }
+        guard !digits.isEmpty, let url = URL(string: "tel:\(digits)") else { return }
+        UIApplication.shared.open(url)
     }
 }

@@ -95,3 +95,18 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(done?.messageId, 9)
     }
 }
+
+final class ContactsCodecTests: XCTestCase {
+    /// The same bytes are asserted in wearos ContactsMessagesTest (`swift and kotlin encode identically`).
+    func testUpsertBytesMatchTheWatch() {
+        let c = SyncContact(id: "a", name: "B", phones: ["+1"], emails: [], favorite: true)
+        XCTAssertEqual(ContactsCodec.upsert([c]), [1, 1, 0x61, 1, 0x42, 1, 1, 2, 0x2B, 0x31, 0])
+        XCTAssertEqual(ContactsCodec.end(generation: 0x01020304), [1, 2, 3, 4])
+        XCTAssertEqual(ContactsCodec.begin(full: true, count: 258), [1, 1, 2])
+    }
+
+    func testPhoneNormalization() {
+        XCTAssertEqual(SyncContact.normalize("+91 98765-43210"), "+919876543210")
+        XCTAssertEqual(SyncContact.normalize("(098) 765 43210"), "09876543210")
+    }
+}

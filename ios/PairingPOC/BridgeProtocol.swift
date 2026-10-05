@@ -21,6 +21,13 @@ enum BridgeProtocol {
         // EVENTS (watch → iPhone)
         case findPhone = 0x90
         case findWatchStopped = 0x91
+        case callRequest = 0x92
+        // CONTACTS (iPhone → watch)
+        case contactsBegin = 0x30
+        case contactsUpsert = 0x31
+        case contactsDelete = 0x32
+        case contactsEnd = 0x33
+        case contactsClear = 0x34
         // DEVICE_STATUS (watch → iPhone)
         case status = 0xA0
     }
@@ -34,6 +41,8 @@ enum BridgeProtocol {
         static let deviceStatus = Capabilities(rawValue: 1 << 3)
         static let find = Capabilities(rawValue: 1 << 4)
         static let prefs = Capabilities(rawValue: 1 << 5)
+        static let secure = Capabilities(rawValue: 1 << 6)
+        static let contacts = Capabilities(rawValue: 1 << 7)
     }
 
     static func split(type: MessageType, messageId: UInt8, payload: [UInt8], maxChunkBytes: Int) -> [Data] {
@@ -163,6 +172,9 @@ struct WatchStatus: Equatable {
     var model: String
     var osVersion: String
     var appVersion: String
+    /// The contacts sync the watch last committed (0 = none) and how many it holds.
+    var contactsGeneration: UInt32 = 0
+    var contactCount: Int = 0
 
     /// Marketing name for Samsung model numbers (SM-R8xx = Galaxy Watch4 family).
     var displayName: String {
@@ -179,7 +191,7 @@ enum BridgeCodec {
         var r = ByteReader(bytes: payload)
         let battery = try r.u8()
         let flags = try r.u8()
-        return WatchStatus(
+        var s = WatchStatus(
             battery: battery <= 100 ? Int(battery) : nil,
             charging: flags & 1 != 0,
             notificationsReady: flags & 2 != 0,
@@ -189,6 +201,16 @@ enum BridgeCodec {
             osVersion: try r.str(),
             appVersion: try r.str()
         )
+        if r.remaining >= 6 {
+            s.contactsGeneration = try r.u32()
+            s.contactCount = try r.u16()
+        }
+        return s
+    }
+
+    static func decodeCallRequest(_ payload: [UInt8]) throws -> (phone: String, name: String) {
+        var r = ByteReader(bytes: payload)
+        return (try r.str(), try r.str())
     }
 
     static func encodeSwitch(_ on: Bool) -> [UInt8] { [on ? 1 : 0] }
@@ -287,5 +309,84 @@ struct ByteReader {
         guard p + n <= bytes.count else { throw DecodeError() }
         defer { p += n }
         return String(decoding: bytes[p..<p + n], as: UTF8.self)
+    }
+}
+
+/// Mirrors the watch's writers: u8 / u16 / u32 big-endian, strings as u8 length + UTF-8 cut on a character boundary.
+struct ByteWriter {
+    private(set) var bytes: [UInt8] = []
+
+    mutating func u8(_ v: Int) { bytes.append(UInt8(truncatingIfNeeded: v)) }
+    mutating func u16(_ v: Int) { u8(v >> 8); u8(v) }
+    mutating func u32(_ v: UInt32) { for shift in [24, 16, 8, 0] { u8(Int(v >> UInt32(shift))) } }
+
+    mutating func str(_ s: String) {
+        var out: [UInt8] = []
+        for scalar in s.unicodeScalars {
+            let encoded = Array(String(scalar).utf8)
+            if out.count + encoded.count > 255 { break }
+            out += encoded
+        }
+        u8(out.count)
+        bytes += out
+    }
+}
+
+/// CONTACTS messages (wearos/protocol/ContactsMessages.kt).
+struct SyncContact: Equatable {
+    let id: String
+    let name: String
+    let phones: [String]
+    let emails: [String]
+    var favorite: Bool
+
+    static let maxPhones = 8
+    static let maxEmails = 3
+
+    func encode(into w: inout ByteWriter) {
+        w.str(id)
+        w.str(name)
+        w.u8(favorite ? 1 : 0)
+        let p = phones.prefix(Self.maxPhones)
+        w.u8(p.count)
+        p.forEach { w.str($0) }
+        let e = emails.prefix(Self.maxEmails)
+        w.u8(e.count)
+        e.forEach { w.str($0) }
+    }
+
+    /// Digits with an optional leading "+", the same rule as the watch's ContactsCodec.normalizePhone.
+    static func normalize(_ raw: String) -> String {
+        let digits = raw.filter(\.isNumber).filter(\.isASCII)
+        return raw.trimmingCharacters(in: .whitespaces).hasPrefix("+") ? "+" + digits : digits
+    }
+}
+
+enum ContactsCodec {
+    static func begin(full: Bool, count: Int) -> [UInt8] {
+        var w = ByteWriter()
+        w.u8(full ? 1 : 0)
+        w.u16(min(count, 0xFFFF))
+        return w.bytes
+    }
+
+    static func upsert(_ contacts: [SyncContact]) -> [UInt8] {
+        var w = ByteWriter()
+        w.u8(contacts.count)
+        contacts.forEach { $0.encode(into: &w) }
+        return w.bytes
+    }
+
+    static func delete(_ ids: [String]) -> [UInt8] {
+        var w = ByteWriter()
+        w.u8(ids.count)
+        ids.forEach { w.str($0) }
+        return w.bytes
+    }
+
+    static func end(generation: UInt32) -> [UInt8] {
+        var w = ByteWriter()
+        w.u32(generation)
+        return w.bytes
     }
 }

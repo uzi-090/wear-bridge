@@ -22,6 +22,8 @@
 	<string>1</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Bridge uses Bluetooth to connect directly to your watch, so it can show your iPhone's notifications and calls. Nothing is sent to the internet.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Bridge copies names and phone numbers to your watch over Bluetooth, so you can see who's who and start calls from your wrist. Contacts never leave your iPhone and watch.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>bluetooth-central</string>

@@ -82,6 +82,11 @@ struct HomeView: View {
                 Row(symbol: "bell.badge.fill", tint: .red, title: "Notifications", value: link.watchSettings?.mode.title)
             }
             Divider().padding(.leading, 58)
+            NavigationLink { ContactsView(link: link) } label: {
+                Row(symbol: "person.crop.circle.fill", tint: .orange, title: "Contacts",
+                    value: ContactSync.shared.enabled ? link.watchStatus.map { "\($0.contactCount)" } : "Off")
+            }
+            Divider().padding(.leading, 58)
             NavigationLink { FindWatchView(link: link) } label: {
                 Row(symbol: "speaker.wave.2.fill", tint: .blue, title: "Find Watch", value: link.ringingWatch ? "Ringing" : nil)
             }

@@ -9,6 +9,7 @@ enum BridgeUUID {
     static let service = CBUUID(string: "9C664C93-19F2-435D-895A-A40751731AE1")
     static let pairing = CBUUID(string: "9C664C93-19F2-435D-0001-A40751731AE1")
     static let control = CBUUID(string: "9C664C93-19F2-435D-0002-A40751731AE1")
+    static let contacts = CBUUID(string: "9C664C93-19F2-435D-0004-A40751731AE1")
     static let events = CBUUID(string: "9C664C93-19F2-435D-0003-A40751731AE1")
     static let deviceStatus = CBUUID(string: "9C664C93-19F2-435D-0005-A40751731AE1")
     static let settings = CBUUID(string: "9C664C93-19F2-435D-0006-A40751731AE1")
@@ -81,6 +82,7 @@ final class WatchLink: NSObject {
     @ObservationIgnored private var statusReassembler = BridgeReassembler()
     @ObservationIgnored private var authReassembler = BridgeReassembler()
     @ObservationIgnored private var authCharacteristic: CBCharacteristic?
+    @ObservationIgnored private var contactsCharacteristic: CBCharacteristic?
     @ObservationIgnored private var watchKey: Data?
     @ObservationIgnored private var staticKey: SymmetricKey?
     @ObservationIgnored private var helloNonce: Data?
@@ -188,6 +190,11 @@ final class WatchLink: NSObject {
     }
 
     func refreshSettings() { send(.getSettings, []) }
+
+    /// Contact sync batches (sealed like everything else).
+    func sendContacts(_ type: BridgeProtocol.MessageType, _ payload: [UInt8]) {
+        send(type, payload, on: contactsCharacteristic)
+    }
 
     func setPrefs(_ prefs: WatchPrefs) {
         watchSettings?.prefs = prefs // optimistic
@@ -355,6 +362,10 @@ final class WatchLink: NSObject {
         case .findWatchStopped:
             note("event: watch found")
             ringingWatch = false
+        case .callRequest:
+            guard let request = try? BridgeCodec.decodeCallRequest(m.payload) else { return }
+            note("event: call request")
+            CallHandoff.offer(phone: request.phone, name: request.name)
         default:
             note("event: unknown type \(m.type)")
         }
@@ -364,8 +375,12 @@ final class WatchLink: NSObject {
         guard case .complete(let sealed) = statusReassembler.accept(chunk), let m = open(sealed),
               m.type == BridgeProtocol.MessageType.status.rawValue else { return }
         do {
-            watchStatus = try BridgeCodec.decodeStatus(m.payload)
+            let status = try BridgeCodec.decodeStatus(m.payload)
+            watchStatus = status
             lastSync = Date()
+            if capabilities.contains(.contacts) {
+                ContactSync.shared.watchReported(generation: status.contactsGeneration, link: self)
+            }
         } catch {
             note("status: malformed")
         }
@@ -536,7 +551,8 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
             return
         }
         peripheral.discoverCharacteristics(
-            [BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus, BridgeUUID.auth],
+            [BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus, BridgeUUID.auth,
+             BridgeUUID.contacts],
             for: service)
     }
 
@@ -545,6 +561,7 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
         control = service.characteristics?.first { $0.uuid == BridgeUUID.control }
         settingsCharacteristic = service.characteristics?.first { $0.uuid == BridgeUUID.settings }
         authCharacteristic = service.characteristics?.first { $0.uuid == BridgeUUID.auth }
+        contactsCharacteristic = service.characteristics?.first { $0.uuid == BridgeUUID.contacts }
         guard let pairing = service.characteristics?.first(where: { $0.uuid == BridgeUUID.pairing }) else {
             phase = .needsAttention("Your watch is running an incompatible version of Bridge.")
             return

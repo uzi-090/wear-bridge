@@ -31,6 +31,9 @@ targets:
           - UIInterfaceOrientationPortrait
         UIBackgroundModes:
           - bluetooth-central
+        NSContactsUsageDescription: >-
+          Bridge copies names and phone numbers to your watch over Bluetooth, so you can see who's who and
+          start calls from your wrist. Contacts never leave your iPhone and watch.
         NSBluetoothAlwaysUsageDescription: >-
           Bridge uses Bluetooth to connect directly to your watch, so it can show your iPhone's
           notifications and calls. Nothing is sent to the internet.

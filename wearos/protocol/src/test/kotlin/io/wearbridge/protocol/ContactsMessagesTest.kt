@@ -65,4 +65,12 @@ class ContactsMessagesTest {
     fun `call request round-trips`() {
         assertEquals("+919876543210" to "Ålice", BridgeCodec.decodeCallRequest(BridgeCodec.encodeCallRequest("+919876543210", "Ålice")))
     }
+
+    @Test
+    fun `swift and kotlin encode identically`() {
+        val c = Contact("a", "B", listOf("+1"), emptyList(), favorite = true)
+        assertEquals(listOf<Byte>(1, 1, 0x61, 1, 0x42, 1, 1, 2, 0x2B, 0x31, 0), ContactsCodec.encodeUpsert(listOf(c)).toList())
+        assertEquals(listOf<Byte>(1, 2, 3, 4), ContactsCodec.encodeEnd(0x01020304).toList())
+        assertEquals(listOf<Byte>(1, 1, 2), ContactsCodec.encodeBegin(true, 258).toList())
+    }
 }
