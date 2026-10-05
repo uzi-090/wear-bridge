@@ -29,7 +29,12 @@ import io.wearbridge.watch.diagnostics.Redact
  * Permissions (BLUETOOTH_CONNECT / BLUETOOTH_ADVERTISE) are checked by [ConnectionManager] before use.
  */
 @SuppressLint("MissingPermission")
-class BridgePeripheral(private val context: Context, private val listener: Listener) {
+class BridgePeripheral(
+    private val context: Context,
+    private val listener: Listener,
+    /** The watch's app-level public key (X9.63), published in the PAIRING value. */
+    private val identityPublicKey: ByteArray,
+) {
 
     interface Listener {
         fun onCentralConnected(device: BluetoothDevice)
@@ -37,6 +42,7 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
         fun onAdvertisingFailed(errorCode: Int, unsupported: Boolean)
         fun onControlWrite(device: BluetoothDevice, value: ByteArray)
         fun onSettingsChunk(device: BluetoothDevice, value: ByteArray)
+        fun onAuthChunk(device: BluetoothDevice, value: ByteArray)
         /** The iPhone enabled or disabled notifications on SETTINGS, EVENTS or DEVICE_STATUS. */
         fun onSubscription(device: BluetoothDevice, characteristic: java.util.UUID, subscribed: Boolean)
     }
@@ -263,7 +269,7 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
             device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
-            val ok = (characteristic.uuid == BridgeUuids.CONTROL || characteristic.uuid == BridgeUuids.SETTINGS) &&
+            val ok = characteristic.uuid in WRITABLE &&
                 !preparedWrite && offset == 0 && value != null
             if (responseNeeded) {
                 server?.sendResponse(
@@ -276,6 +282,7 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
             when (characteristic.uuid) {
                 BridgeUuids.CONTROL -> listener.onControlWrite(device, value!!.copyOf())
                 BridgeUuids.SETTINGS -> listener.onSettingsChunk(device, value!!.copyOf())
+                BridgeUuids.AUTH -> listener.onAuthChunk(device, value!!.copyOf())
             }
         }
     }
@@ -301,6 +308,9 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
             )
             addCharacteristic(notifying(BridgeUuids.EVENTS, 0, 0))
             addCharacteristic(notifying(BridgeUuids.DEVICE_STATUS, 0, 0))
+            addCharacteristic(
+                notifying(BridgeUuids.AUTH, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED),
+            )
         }
 
     /** A characteristic with NOTIFY and an encrypted-only CCCD, plus any [extraProperties]. */
@@ -317,10 +327,14 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
 
     private fun pairingValue(): ByteArray {
         val caps = BridgeUuids.CAP_ANCS_CLIENT or BridgeUuids.CAP_AMS_CLIENT or BridgeUuids.CAP_SETTINGS or
-            BridgeUuids.CAP_DEVICE_STATUS or BridgeUuids.CAP_FIND or BridgeUuids.CAP_PREFS
+            BridgeUuids.CAP_DEVICE_STATUS or BridgeUuids.CAP_FIND or BridgeUuids.CAP_PREFS or BridgeUuids.CAP_SECURE
         return byteArrayOf(
             BridgeUuids.PROTOCOL_VERSION.toByte(),
             caps.toByte(), (caps ushr 8).toByte(), (caps ushr 16).toByte(), (caps ushr 24).toByte(),
-        )
+        ) + identityPublicKey // 70 bytes in total: iOS reads it with a long read (offsets are handled above)
+    }
+
+    private companion object {
+        val WRITABLE = setOf(BridgeUuids.CONTROL, BridgeUuids.SETTINGS, BridgeUuids.AUTH)
     }
 }

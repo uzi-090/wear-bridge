@@ -13,6 +13,7 @@ import io.wearbridge.protocol.SettingsSnapshot
 import io.wearbridge.protocol.WatchPrefs
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.ble.BridgePeripheral
+import io.wearbridge.watch.security.SecureLink
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
 import io.wearbridge.watch.notifications.AppCatalog
@@ -37,6 +38,7 @@ import kotlinx.coroutines.launch
  */
 class SettingsChannel(
     private val peripheral: BridgePeripheral,
+    private val secure: SecureLink,
     private val policy: PolicyStore,
     private val icons: AppIconStore,
     private val settings: BridgeSettings,
@@ -71,12 +73,20 @@ class SettingsChannel(
         reassemblers.remove(device.address)
     }
 
+    /** The iPhone app just authenticated: send what it subscribed to before it could be trusted. */
+    fun onAuthenticated(device: BluetoothDevice) {
+        if (device.address in subscribers) send(device)
+    }
+
     fun onChunk(device: BluetoothDevice, chunk: ByteArray) {
         val reassembler = reassemblers.getOrPut(device.address) { Reassembler(maxMessageBytes = 40 * 1024) }
         when (val r = reassembler.accept(chunk)) {
             Reassembler.Result.Incomplete -> Unit
             is Reassembler.Result.Error -> DiagLog.w("settings: ${r.reason}")
-            is Reassembler.Result.Complete -> handle(device, r.message)
+            is Reassembler.Result.Complete -> {
+                val plain = secure.open(device, r.message.type, r.message.payload) ?: return
+                handle(device, r.message.copy(payload = plain))
+            }
         }
     }
 
@@ -127,7 +137,7 @@ class SettingsChannel(
     }
 
     private fun send(device: BluetoothDevice) {
-        val payload = SettingsCodec.encodeSnapshot(snapshot())
+        val payload = secure.seal(device, MessageType.SETTINGS, SettingsCodec.encodeSnapshot(snapshot())) ?: return
         messageId = (messageId + 1) and 0xFF
         val chunks = Framing.split(MessageType.SETTINGS, messageId, payload, peripheral.maxPayload(device))
         peripheral.notify(device, io.wearbridge.watch.ble.BridgeUuids.SETTINGS, chunks)

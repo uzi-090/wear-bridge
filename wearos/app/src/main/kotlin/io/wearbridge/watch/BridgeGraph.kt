@@ -13,6 +13,8 @@ import io.wearbridge.watch.ble.ConnectionManager
 import io.wearbridge.watch.bridge.WatchBattery
 import io.wearbridge.watch.find.FindPhoneState
 import io.wearbridge.watch.find.FindWatchAlert
+import io.wearbridge.watch.security.ApprovalNotifier
+import io.wearbridge.watch.security.IdentityStore
 import io.wearbridge.watch.ble.LinkSnapshot
 import io.wearbridge.watch.notifications.ActionStatus
 import io.wearbridge.watch.notifications.MirrorNotifier
@@ -44,6 +46,12 @@ object BridgeGraph {
         private set
     lateinit var findWatch: FindWatchAlert
         private set
+    lateinit var identity: IdentityStore
+        private set
+
+    /** The 6-digit code while a new iPhone app waits for the user to allow it on the watch. */
+    internal val pendingApprovalFlow = MutableStateFlow<String?>(null)
+    val pendingApproval: StateFlow<String?> = pendingApprovalFlow
 
     /** The watch's own battery (from ACTION_BATTERY_CHANGED), sent to the iPhone app. */
     internal val watchBatteryFlow = MutableStateFlow(WatchBattery())
@@ -92,6 +100,8 @@ object BridgeGraph {
         icons = AppIconStore(app)
         notifier = MirrorNotifier(app, settings).also { it.createChannels() }
         findWatch = FindWatchAlert(app).also { it.createChannel() }
+        identity = IdentityStore(app)
+        approvals = ApprovalNotifier(app).also { it.createChannel() }
     }
 
     fun performAction(uid: Long, action: ActionId) {
@@ -117,6 +127,20 @@ object BridgeGraph {
     fun setHistory(enabled: Boolean) {
         settings.setHistoryFlag(enabled)
         if (!enabled) repository.clearHistory()
+    }
+
+    internal lateinit var approvals: ApprovalNotifier
+        private set
+
+    /** The user allowed (or denied) a new Bridge iPhone app on the watch. */
+    fun approveIphoneApp(allow: Boolean) {
+        controller?.approveIphoneApp(allow)
+    }
+
+    /** Forgets every allowed iPhone app. The current connection is reset, so the iPhone app asks again. */
+    fun forgetIphoneApps() {
+        identity.forgetAll()
+        controller?.reconnect()
     }
 
     /** Rings the iPhone (best effort: needs the iPhone app alive in the background). */

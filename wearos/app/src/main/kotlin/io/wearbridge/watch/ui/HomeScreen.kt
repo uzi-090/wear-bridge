@@ -57,6 +57,7 @@ fun HomeScreen(
     val model by BridgeGraph.phoneModel.collectAsStateWithLifecycle()
     val battery by BridgeGraph.phoneBattery.collectAsStateWithLifecycle()
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
+    val approval by BridgeGraph.pendingApproval.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
     val context = LocalContext.current
 
@@ -76,6 +77,21 @@ fun HomeScreen(
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
+            }
+            approval?.let { code ->
+                // A new Bridge iPhone app wants access. Same code on both screens = the right app.
+                item { ListHeader { Text("Allow iPhone app?") } }
+                item {
+                    Text(
+                        code.chunked(3).joinToString(" "),
+                        style = MaterialTheme.typography.displaySmall,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                item { Caption("Allow if your iPhone shows the same code.") }
+                item { Button(onClick = { BridgeGraph.approveIphoneApp(true) }, modifier = Modifier.fillMaxWidth(), label = { Text("Allow") }) }
+                item { FilledTonalButton(onClick = { BridgeGraph.approveIphoneApp(false) }, modifier = Modifier.fillMaxWidth(), label = { Text("Deny") }) }
             }
             Copy.guidance(link)?.let { text ->
                 item {

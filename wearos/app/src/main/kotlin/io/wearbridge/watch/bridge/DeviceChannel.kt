@@ -13,6 +13,7 @@ import io.wearbridge.watch.ble.BridgeUuids
 import io.wearbridge.watch.ble.LinkState
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
+import io.wearbridge.watch.security.SecureLink
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -31,6 +32,7 @@ import java.util.UUID
  */
 class DeviceChannel(
     private val peripheral: BridgePeripheral,
+    private val secure: SecureLink,
     private val scope: CoroutineScope,
     private val appVersion: String,
 ) {
@@ -40,7 +42,7 @@ class DeviceChannel(
     private var messageId = 0
     private var pushJob: Job? = null
 
-    val canReachPhoneApp: Boolean get() = eventSubscribers.isNotEmpty()
+    val canReachPhoneApp: Boolean get() = eventSubscribers.values.any(secure::hasSession)
 
     init {
         scope.launch {
@@ -59,14 +61,20 @@ class DeviceChannel(
         DiagLog.i("bridge ${if (characteristic == BridgeUuids.EVENTS) "events" else "status"} subscribed=$subscribed ${Redact.device(device)}")
         if (subscribed) map[device.address] = device else map.remove(device.address)
         if (subscribed && characteristic == BridgeUuids.DEVICE_STATUS) sendStatus(device)
-        BridgeGraph.phoneAppConnectedFlow.value = eventSubscribers.isNotEmpty()
+        BridgeGraph.phoneAppConnectedFlow.value = canReachPhoneApp
+    }
+
+    /** The iPhone app just authenticated: send the status it subscribed to before it could be trusted. */
+    fun onAuthenticated(device: BluetoothDevice) {
+        if (device.address in statusSubscribers) sendStatus(device)
+        BridgeGraph.phoneAppConnectedFlow.value = canReachPhoneApp
     }
 
     fun onDisconnected(device: BluetoothDevice) {
         reassemblers.remove(device.address)
         statusSubscribers.remove(device.address)
         eventSubscribers.remove(device.address)
-        BridgeGraph.phoneAppConnectedFlow.value = eventSubscribers.isNotEmpty()
+        BridgeGraph.phoneAppConnectedFlow.value = canReachPhoneApp
     }
 
     fun onControlChunk(device: BluetoothDevice, chunk: ByteArray) {
@@ -74,13 +82,16 @@ class DeviceChannel(
         when (val result = r.accept(chunk)) {
             is Reassembler.Result.Incomplete -> Unit
             is Reassembler.Result.Error -> DiagLog.w("control: ${result.reason}")
-            is Reassembler.Result.Complete -> handle(device, result.message)
+            is Reassembler.Result.Complete -> {
+                val plain = secure.open(device, result.message.type, result.message.payload) ?: return
+                handle(device, result.message.copy(payload = plain))
+            }
         }
     }
 
-    /** Sends an event to every subscribed iPhone app. Returns false if none is listening. */
+    /** Sends an event to every subscribed, authenticated iPhone app. Returns false if none is listening. */
     fun sendEvent(type: Int, payload: ByteArray = ByteArray(0)): Boolean {
-        if (eventSubscribers.isEmpty()) return false
+        if (!canReachPhoneApp) return false
         eventSubscribers.values.forEach { d -> send(d, BridgeUuids.EVENTS, type, payload) }
         return true
     }
@@ -121,8 +132,9 @@ class DeviceChannel(
     }
 
     private fun send(device: BluetoothDevice, characteristic: UUID, type: Int, payload: ByteArray) {
+        val sealed = secure.seal(device, type, payload) ?: return // not authenticated: send nothing
         messageId = (messageId + 1) and 0xFF
-        peripheral.notify(device, characteristic, Framing.split(type, messageId, payload, peripheral.maxPayload(device)))
+        peripheral.notify(device, characteristic, Framing.split(type, messageId, sealed, peripheral.maxPayload(device)))
     }
 
     private fun status(b: WatchBattery, ready: Boolean, media: Boolean, inbox: Int) = WatchStatus(

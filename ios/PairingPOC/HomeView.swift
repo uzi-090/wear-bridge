@@ -10,6 +10,7 @@ struct HomeView: View {
             ScrollView {
                 VStack(spacing: 22) {
                     hero
+                    if link.phase == .connected { SecurityCard(link: link) }
                     if link.phase == .connected || link.watchStatus != nil {
                         StatsCard(link: link)
                     }

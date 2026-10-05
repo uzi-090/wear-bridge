@@ -14,8 +14,11 @@ object BridgeUuids {
     /** Notification settings channel: iOS writes requests, the watch notifies responses (docs/BLE_PROTOCOL.md). */
     val SETTINGS: UUID = characteristic(0x0006)
 
+    /** App-level authentication: HELLO from the iPhone app, the watch's answers (docs/BLE_PROTOCOL.md). */
+    val AUTH: UUID = characteristic(0x000A)
+
     /** Characteristics the iPhone can subscribe to. */
-    val NOTIFYING: Set<UUID> = setOf(SETTINGS, EVENTS, DEVICE_STATUS)
+    val NOTIFYING: Set<UUID> = setOf(SETTINGS, EVENTS, DEVICE_STATUS, AUTH)
     val CCCD: UUID = UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")
 
     const val PROTOCOL_VERSION = 1
@@ -25,6 +28,8 @@ object BridgeUuids {
     const val CAP_DEVICE_STATUS = 1 shl 3
     const val CAP_FIND = 1 shl 4
     const val CAP_PREFS = 1 shl 5
+    /** Bridge messages are sealed with app-level keys (the watch's public key follows the capabilities). */
+    const val CAP_SECURE = 1 shl 6
 
     private fun characteristic(index: Int): UUID =
         UUID.fromString("9C664C93-19F2-435D-%04X-A40751731AE1".format(index))

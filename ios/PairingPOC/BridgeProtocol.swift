@@ -37,13 +37,17 @@ enum BridgeProtocol {
     }
 
     static func split(type: MessageType, messageId: UInt8, payload: [UInt8], maxChunkBytes: Int) -> [Data] {
+        split(rawType: type.rawValue, messageId: messageId, payload: payload, maxChunkBytes: maxChunkBytes)
+    }
+
+    static func split(rawType: UInt8, messageId: UInt8, payload: [UInt8], maxChunkBytes: Int) -> [Data] {
         let perChunk = max(1, maxChunkBytes - headerBytes)
         let count = max(1, (payload.count + perChunk - 1) / perChunk)
         return (0..<count).map { i in
             let start = i * perChunk
             let end = min(payload.count, start + perChunk)
             let more: UInt8 = i < count - 1 ? 1 : 0
-            return Data([version, type.rawValue, messageId, more] + payload[start..<end])
+            return Data([version, rawType, messageId, more] + payload[start..<end])
         }
     }
 }

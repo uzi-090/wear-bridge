@@ -25,6 +25,7 @@ import io.wearbridge.watch.bridge.DeviceChannel
 import io.wearbridge.watch.bridge.SettingsChannel
 import io.wearbridge.watch.bridge.WatchBattery
 import io.wearbridge.watch.find.FindPhoneState
+import io.wearbridge.watch.security.SecureLink
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
 import io.wearbridge.watch.media.AmsClient
@@ -65,11 +66,15 @@ class ConnectionManager(
     private val adapter = context.getSystemService(BluetoothManager::class.java).adapter
     private val sm = ConnectionStateMachine()
     private val engine = engineFactory(scope)
-    private val peripheral = BridgePeripheral(context, PeripheralListener())
+    private val peripheral = BridgePeripheral(context, PeripheralListener(), BridgeGraph.identity.publicKey)
     private val pairing = PairingManager(scope, onBonded = { dispatch(LinkEvent.Bonded) }, onFailed = { dispatch(LinkEvent.BondFailed) })
     private val reconnection = ReconnectionManager(scope) { dispatch(LinkEvent.RetryTimer) }
-    private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, BridgeGraph.icons, BridgeGraph.settings, scope)
-    private val deviceChannel = DeviceChannel(peripheral, scope, appVersion(context))
+    private val secureLink: SecureLink = SecureLink(peripheral, BridgeGraph.identity, BridgeGraph.approvals) { device ->
+        settingsChannel.onAuthenticated(device)
+        deviceChannel.onAuthenticated(device)
+    }
+    private val settingsChannel: SettingsChannel = SettingsChannel(peripheral, secureLink, BridgeGraph.policy, BridgeGraph.icons, BridgeGraph.settings, scope)
+    private val deviceChannel: DeviceChannel = DeviceChannel(peripheral, secureLink, scope, appVersion(context))
     private var findPhoneTimeout: Job? = null
 
     private var device: BluetoothDevice? = null
@@ -93,6 +98,8 @@ class ConnectionManager(
         data class ControlChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
         data class FindPhone(val ring: Boolean) : Msg
         data class Event(val type: Int, val payload: ByteArray) : Msg
+        data class AuthChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
+        data class Approve(val allow: Boolean) : Msg
         data class Media(val command: RemoteCommand) : Msg
         data object Shutdown : Msg
     }
@@ -126,6 +133,8 @@ class ConnectionManager(
 
     fun sendEvent(type: Int, payload: ByteArray) = post(Msg.Event(type, payload))
 
+    fun approveIphoneApp(allow: Boolean) = post(Msg.Approve(allow))
+
     private fun post(msg: Msg) {
         inbox.trySend(msg)
     }
@@ -153,6 +162,7 @@ class ConnectionManager(
                 }
             }
             is Msg.CentralDisconnected -> {
+                secureLink.onDisconnected(msg.device)
                 settingsChannel.onDisconnected(msg.device)
                 deviceChannel.onDisconnected(msg.device)
                 if (msg.device.address == device?.address) {
@@ -161,12 +171,13 @@ class ConnectionManager(
                 }
             }
             is Msg.SettingsChunk -> settingsChannel.onChunk(msg.device, msg.value)
-            is Msg.Subscription ->
-                if (msg.characteristic == BridgeUuids.SETTINGS) {
-                    settingsChannel.onSubscription(msg.device, msg.subscribed)
-                } else {
-                    deviceChannel.onSubscription(msg.device, msg.characteristic, msg.subscribed)
-                }
+            is Msg.Subscription -> when (msg.characteristic) {
+                BridgeUuids.SETTINGS -> settingsChannel.onSubscription(msg.device, msg.subscribed)
+                BridgeUuids.AUTH -> Unit // answers go out when a HELLO arrives
+                else -> deviceChannel.onSubscription(msg.device, msg.characteristic, msg.subscribed)
+            }
+            is Msg.AuthChunk -> secureLink.onAuthChunk(msg.device, msg.value)
+            is Msg.Approve -> secureLink.approve(msg.allow)
             is Msg.ControlChunk -> deviceChannel.onControlChunk(msg.device, msg.value)
             is Msg.Event -> deviceChannel.sendEvent(msg.type, msg.payload)
             is Msg.FindPhone -> ringPhone(msg.ring)
@@ -405,6 +416,7 @@ class ConnectionManager(
         override fun onAdvertisingFailed(errorCode: Int, unsupported: Boolean) =
             post(Msg.Link(LinkEvent.AdvertisingFailed(unsupported)))
         override fun onControlWrite(device: BluetoothDevice, value: ByteArray) = post(Msg.ControlChunk(device, value))
+        override fun onAuthChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.AuthChunk(device, value))
         override fun onSettingsChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.SettingsChunk(device, value))
         override fun onSubscription(device: BluetoothDevice, characteristic: UUID, subscribed: Boolean) =
             post(Msg.Subscription(device, characteristic, subscribed))

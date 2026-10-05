@@ -44,6 +44,15 @@ fun SettingsScreen() {
                     secondaryLabel = { Text("Keep notifications for 24 hours after you clear them on iPhone. Never for hidden apps.") },
                 )
             }
+            item { ListHeader { Text("Security") } }
+            item {
+                FilledTonalButton(
+                    onClick = BridgeGraph::forgetIphoneApps,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Forget iPhone app") },
+                    secondaryLabel = { Text("The Bridge iPhone app will need your OK again") },
+                )
+            }
             item { ListHeader { Text("Experimental") } }
             item {
                 SwitchButton(

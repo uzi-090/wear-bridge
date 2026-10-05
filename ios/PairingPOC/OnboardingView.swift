@@ -49,12 +49,12 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(PrimaryButtonStyle())
             case 2:
-                if link.phase == .connected {
+                if link.phase == .connected && link.security == .secure {
                     Button("Continue") { step += 1 }.buttonStyle(PrimaryButtonStyle())
                 } else {
                     Button(link.phase.isBusy ? "Looking…" : "Find Watch", action: link.findWatch)
                         .buttonStyle(PrimaryButtonStyle())
-                        .disabled(link.phase.isBusy || !link.bluetoothStarted)
+                        .disabled(link.phase.isBusy || link.phase == .connected || !link.bluetoothStarted)
                 }
             case 3:
                 Button(link.watchStatus?.notificationsReady == true ? "Continue" : "I've Turned It On") { step += 1 }
@@ -166,6 +166,7 @@ private struct NearbyStep: View {
         } extra: {
             VStack(spacing: 12) {
                 StatusPill(phase: link.phase)
+                if link.phase == .connected { SecurityCard(link: link) }
                 if link.phase == .searching && !link.showingAllNearby {
                     Button("Can't find it? Show nearby devices", action: link.showAllNearby)
                         .font(.callout)

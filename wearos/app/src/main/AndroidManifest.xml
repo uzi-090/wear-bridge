@@ -84,5 +84,9 @@
         <receiver
             android:name=".find.FindWatchReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".security.ApprovalReceiver"
+            android:exported="false" />
     </application>
 </manifest>

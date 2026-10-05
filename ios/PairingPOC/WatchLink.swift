@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CryptoKit
 import Foundation
 import Observation
 
@@ -11,6 +12,7 @@ enum BridgeUUID {
     static let events = CBUUID(string: "9C664C93-19F2-435D-0003-A40751731AE1")
     static let deviceStatus = CBUUID(string: "9C664C93-19F2-435D-0005-A40751731AE1")
     static let settings = CBUUID(string: "9C664C93-19F2-435D-0006-A40751731AE1")
+    static let auth = CBUUID(string: "9C664C93-19F2-435D-000A-A40751731AE1")
 }
 
 /// Phase 1 companion: finds the watch, forces LE pairing by reading an encrypted characteristic, then
@@ -32,6 +34,18 @@ final class WatchLink: NSObject {
         case connected
         case reconnecting
         case needsAttention(String)
+    }
+
+    /// App-level authentication with the watch (docs/BLE_PROTOCOL.md). Bridge messages flow only when `.secure`.
+    enum Security: Equatable {
+        case none
+        case handshaking
+        /// The watch is asking its user to allow this app. Both screens show this code.
+        case awaitingApproval(code: String)
+        case secure
+        case denied
+        /// The watch's key differs from the one pinned at setup (watch reset or Bridge reinstalled).
+        case watchIdentityChanged
     }
 
     struct Nearby: Identifiable {
@@ -56,6 +70,7 @@ final class WatchLink: NSObject {
     private(set) var diagnostics: [String] = []
     /// The watch's notification settings (the watch stores and applies them). nil until received.
     private(set) var watchSettings: WatchSettings?
+    private(set) var security: Security = .none
 
     @ObservationIgnored private var central: CBCentralManager!
     @ObservationIgnored private var peripheral: CBPeripheral?
@@ -64,6 +79,13 @@ final class WatchLink: NSObject {
     @ObservationIgnored private var settingsReassembler = BridgeReassembler()
     @ObservationIgnored private var eventsReassembler = BridgeReassembler()
     @ObservationIgnored private var statusReassembler = BridgeReassembler()
+    @ObservationIgnored private var authReassembler = BridgeReassembler()
+    @ObservationIgnored private var authCharacteristic: CBCharacteristic?
+    @ObservationIgnored private var watchKey: Data?
+    @ObservationIgnored private var staticKey: SymmetricKey?
+    @ObservationIgnored private var helloNonce: Data?
+    @ObservationIgnored private var session: SecureSession?
+    @ObservationIgnored private lazy var identity = BridgeIdentity.privateKey()
     @ObservationIgnored private var nextMessageId: UInt8 = 0
     /// Set when pairing fails. Stops auto-reconnect from silently starting another attempt (found on hardware).
     @ObservationIgnored private var pairingFailed = false
@@ -194,11 +216,17 @@ final class WatchLink: NSObject {
     }
 
     private func send(_ type: BridgeProtocol.MessageType, _ payload: [UInt8], on characteristic: CBCharacteristic?) {
+        // Everything on the bridge is sealed with the session keys. Without a session, nothing is sent.
+        guard session != nil, let sealed = try? session?.seal(type: type.rawValue, payload) else { return }
+        writeFramed(type.rawValue, sealed, on: characteristic)
+    }
+
+    private func writeFramed(_ type: UInt8, _ payload: [UInt8], on characteristic: CBCharacteristic?) {
         guard let p = peripheral, let c = characteristic, p.state == .connected else { return }
         nextMessageId &+= 1
         // One ATT packet per chunk (no prepared writes, which the watch rejects).
         let maxChunk = min(p.maximumWriteValueLength(for: .withoutResponse), 182)
-        for chunk in BridgeProtocol.split(type: type, messageId: nextMessageId, payload: payload, maxChunkBytes: maxChunk) {
+        for chunk in BridgeProtocol.split(rawType: type, messageId: nextMessageId, payload: payload, maxChunkBytes: maxChunk) {
             p.writeValue(chunk, for: c, type: .withResponse)
         }
     }
@@ -214,6 +242,9 @@ final class WatchLink: NSObject {
         watchName = nil
         protocolVersion = nil
         UserDefaults.standard.removeObject(forKey: Self.savedIdentifierKey)
+        BridgeIdentity.pinnedWatch = nil
+        session = nil
+        security = .none
         phase = .notSetUp
         note("forgot watch")
     }
@@ -279,13 +310,23 @@ final class WatchLink: NSObject {
         }
     }
 
+    /// Opens a sealed bridge message. nil (and dropped) if there's no session or it doesn't verify.
+    private func open(_ m: BridgeReassembler.Message) -> BridgeReassembler.Message? {
+        guard let plain = session?.open(type: m.type, m.payload) else {
+            note("rejected message type=\(m.type)")
+            return nil
+        }
+        return BridgeReassembler.Message(type: m.type, messageId: m.messageId, payload: plain)
+    }
+
     private func receiveSettingsChunk(_ chunk: Data) {
         switch settingsReassembler.accept(chunk) {
         case .incomplete:
             break
         case .error(let reason):
             note("settings error: \(reason)")
-        case .complete(let message):
+        case .complete(let sealed):
+            guard let message = open(sealed) else { return }
             guard message.type == BridgeProtocol.MessageType.settings.rawValue else { return }
             do {
                 watchSettings = try SettingsCodec.decodeSnapshot(message.payload)
@@ -299,7 +340,7 @@ final class WatchLink: NSObject {
     }
 
     private func receiveEventChunk(_ chunk: Data) {
-        guard case .complete(let m) = eventsReassembler.accept(chunk) else { return }
+        guard case .complete(let sealed) = eventsReassembler.accept(chunk), let m = open(sealed) else { return }
         lastSync = Date()
         switch BridgeProtocol.MessageType(rawValue: m.type) {
         case .findPhone:
@@ -315,13 +356,74 @@ final class WatchLink: NSObject {
     }
 
     private func receiveStatusChunk(_ chunk: Data) {
-        guard case .complete(let m) = statusReassembler.accept(chunk), m.type == BridgeProtocol.MessageType.status.rawValue else { return }
+        guard case .complete(let sealed) = statusReassembler.accept(chunk), let m = open(sealed),
+              m.type == BridgeProtocol.MessageType.status.rawValue else { return }
         do {
             watchStatus = try BridgeCodec.decodeStatus(m.payload)
             lastSync = Date()
         } catch {
             note("status: malformed")
         }
+    }
+
+    // MARK: - App-level authentication
+
+    /// HELLO = our public key ‖ fresh nonce ‖ MAC proving we hold the private key.
+    private func sendHello() {
+        guard let watchKey else { return }
+        do {
+            let key = try BridgeCrypto.staticKey(privateKey: identity, watchKey: watchKey)
+            let nonce = BridgeCrypto.randomNonce()
+            staticKey = key
+            helloNonce = nonce
+            session = nil
+            security = .handshaking
+            let payload = identity.publicKey.x963Representation + nonce + BridgeCrypto.helloMac(staticKey: key, nonceI: nonce)
+            writeFramed(BridgeCrypto.AuthType.hello.rawValue, [UInt8](payload), on: authCharacteristic)
+            note("auth: hello sent")
+        } catch {
+            note("auth: invalid watch key")
+            security = .denied
+        }
+    }
+
+    private func receiveAuthChunk(_ chunk: Data) {
+        guard case .complete(let m) = authReassembler.accept(chunk) else { return }
+        switch BridgeCrypto.AuthType(rawValue: m.type) {
+        case .helloOK:
+            guard let key = staticKey, let nonceI = helloNonce, m.payload.count == BridgeCrypto.nonceBytes + BridgeCrypto.macBytes else { return }
+            let nonceW = Data(m.payload.prefix(BridgeCrypto.nonceBytes))
+            let mac = Data(m.payload.suffix(BridgeCrypto.macBytes))
+            // The watch proves it holds the pinned key. A mismatch means someone else is answering.
+            guard mac == BridgeCrypto.okMac(staticKey: key, nonceI: nonceI, nonceW: nonceW) else {
+                note("auth: watch failed verification")
+                security = .denied
+                return
+            }
+            session = SecureSession(keys: BridgeCrypto.sessionKeys(staticKey: key, nonceI: nonceI, nonceW: nonceW))
+            security = .secure
+            note("auth: secure session")
+        case .needsApproval:
+            guard let key = staticKey, let watchKey else { return }
+            security = .awaitingApproval(code: BridgeCrypto.pairingCode(
+                staticKey: key, iphoneKey: identity.publicKey.x963Representation, watchKey: watchKey))
+            note("auth: waiting for approval on the watch")
+        case .denied:
+            security = .denied
+            note("auth: denied by the watch")
+        default:
+            break
+        }
+    }
+
+    /// After a denial, ask the watch again.
+    func retryAuthorization() { sendHello() }
+
+    /// The watch was reset or Bridge was reinstalled on it: trust its new key (the user confirmed).
+    func trustNewWatchIdentity() {
+        BridgeIdentity.pinnedWatch = watchKey
+        note("auth: new watch identity trusted")
+        sendHello()
     }
 
     private func note(_ line: String) {
@@ -400,6 +502,9 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
         note("disconnected autoReconnect=\(isReconnecting) code=\((error as NSError?)?.code ?? 0)")
         watchSettings = nil // only show what the watch confirms
         ringingWatch = false
+        session = nil
+        security = .none
+        authReassembler.reset()
         iconsSentThisConnection.removeAll()
         settingsReassembler.reset()
         eventsReassembler.reset()
@@ -425,13 +530,15 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
             return
         }
         peripheral.discoverCharacteristics(
-            [BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus], for: service)
+            [BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus, BridgeUUID.auth],
+            for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let error { return handle(error: error, context: "characteristics") }
         control = service.characteristics?.first { $0.uuid == BridgeUUID.control }
         settingsCharacteristic = service.characteristics?.first { $0.uuid == BridgeUUID.settings }
+        authCharacteristic = service.characteristics?.first { $0.uuid == BridgeUUID.auth }
         guard let pairing = service.characteristics?.first(where: { $0.uuid == BridgeUUID.pairing }) else {
             phase = .needsAttention("Your watch is running an incompatible version of Bridge.")
             return
@@ -452,6 +559,9 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
         case BridgeUUID.deviceStatus:
             if let value = characteristic.value { receiveStatusChunk(value) }
             return
+        case BridgeUUID.auth:
+            if let value = characteristic.value { receiveAuthChunk(value) }
+            return
         default:
             break
         }
@@ -459,9 +569,22 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
         guard characteristic.uuid == BridgeUUID.pairing, let value = characteristic.value, !value.isEmpty else { return }
         let pairing = characteristic
         protocolVersion = Int(value[value.startIndex])
-        if value.count >= 5 {
-            let b = [UInt8](value)
+        let b = [UInt8](value)
+        if b.count >= 5 {
             capabilities = .init(rawValue: UInt32(b[1]) | UInt32(b[2]) << 8 | UInt32(b[3]) << 16 | UInt32(b[4]) << 24)
+        }
+        // The watch's app-level public key follows. Pinned on first use, checked on every connection after.
+        if b.count >= 5 + BridgeCrypto.publicKeyBytes {
+            let key = Data(b[5..<(5 + BridgeCrypto.publicKeyBytes)])
+            watchKey = key
+            if let pinned = BridgeIdentity.pinnedWatch, pinned != key {
+                security = .watchIdentityChanged
+                note("auth: watch identity changed")
+            } else {
+                BridgeIdentity.pinnedWatch = key
+            }
+        } else {
+            note("auth: watch doesn't support app-level security (update Bridge on the watch)")
         }
         watchName = peripheral.name
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.savedIdentifierKey)
@@ -469,7 +592,7 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
         note("bonded, protocol v\(protocolVersion ?? 0)")
         // Subscribing makes the watch send its current settings and status. Events (Find iPhone) arrive
         // even while this app is in the background: iOS wakes it for them (bluetooth-central mode).
-        let wanted: Set<CBUUID> = [BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus]
+        let wanted: Set<CBUUID> = [BridgeUUID.settings, BridgeUUID.events, BridgeUUID.deviceStatus, BridgeUUID.auth]
         for c in pairing.service?.characteristics ?? [] where wanted.contains(c.uuid) {
             peripheral.setNotifyValue(true, for: c)
         }
@@ -480,6 +603,10 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        // The watch's answer arrives on AUTH, so say hello only once we're listening there.
+        if characteristic.uuid == BridgeUUID.auth, characteristic.isNotifying, security != .watchIdentityChanged {
+            sendHello()
+        }
         note("notify \(characteristic.uuid.uuidString.prefix(8))… on=\(characteristic.isNotifying) code=\((error as NSError?)?.code ?? 0)")
     }
 
