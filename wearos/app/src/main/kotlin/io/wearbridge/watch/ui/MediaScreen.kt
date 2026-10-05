@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -30,6 +31,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
@@ -42,6 +44,8 @@ import androidx.wear.compose.material3.IconButton
 import androidx.wear.compose.material3.LevelIndicator
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Stepper
+import androidx.wear.compose.material3.StepperLevelIndicator
 import androidx.wear.compose.material3.Text
 import io.wearbridge.ams.NowPlaying
 import io.wearbridge.ams.RemoteCommand
@@ -50,13 +54,16 @@ import io.wearbridge.watch.R
 import io.wearbridge.watch.ble.LinkState
 import kotlinx.coroutines.delay
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Now Playing on the iPhone, over Apple Media Service: works with any app iOS shows in its Now Playing
- * controls (Apple Music, Spotify, podcasts, YouTube…). The crown changes the iPhone's volume.
+ * controls (Apple Music, Spotify, podcasts, YouTube…). Laid out like the Wear OS media player: track
+ * info on top, transport controls in the middle with progress around play/pause, a volume button at the
+ * bottom, and the bezel or crown changes the iPhone's volume with the level shown on the screen edge.
  */
 @Composable
-fun MediaScreen() {
+fun MediaScreen(onOpenVolume: () -> Unit) {
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val np = media
@@ -66,16 +73,15 @@ fun MediaScreen() {
             np == null && link.state != LinkState.READY -> EmptyMedia("Not connected", "Connect to your iPhone to control what it's playing.")
             np == null -> EmptyMedia("Media unavailable", "Your iPhone isn't sharing media controls right now.")
             !np.hasPlayer -> EmptyMedia("Nothing playing", "Start music or a podcast on your iPhone, then control it here.")
-            else -> Player(np)
+            else -> Player(np, onOpenVolume)
         }
     }
 }
 
 @Composable
-private fun Player(np: NowPlaying) {
+private fun Player(np: NowPlaying, onOpenVolume: () -> Unit) {
     val haptics = LocalHapticFeedback.current
-    val focus = remember { FocusRequester() }
-    var rotaryAccumulator by remember { mutableFloatStateOf(0f) }
+    val volume = rememberVolume(np)
     var volumeShownAt by remember { mutableLongStateOf(0L) }
 
     // Position only ticks while this screen is visible and playing: a UI timer, never a Bluetooth poll.
@@ -86,10 +92,11 @@ private fun Player(np: NowPlaying) {
             value = SystemClock.elapsedRealtime()
         }
     }
-    val showVolume by produceState(false, volumeShownAt) {
+    // While the bezel turns, the level shows on the screen edge, then fades away (the Wear OS pattern).
+    val showLevel by produceState(false, volumeShownAt) {
         if (volumeShownAt == 0L) return@produceState
         value = true
-        delay(VOLUME_VISIBLE_MS)
+        delay(LEVEL_VISIBLE_MS)
         value = false
     }
 
@@ -98,41 +105,19 @@ private fun Player(np: NowPlaying) {
         BridgeGraph.mediaCommand(command)
     }
 
-    LaunchedEffect(Unit) { focus.requestFocus() }
-
     Box(
         Modifier
             .fillMaxSize()
-            .onRotaryScrollEvent { e ->
-                rotaryAccumulator += e.verticalScrollPixels
-                if (abs(rotaryAccumulator) >= ROTARY_STEP_PX) {
-                    val up = rotaryAccumulator > 0
-                    rotaryAccumulator = 0f
-                    haptics.performHapticFeedback(HapticFeedbackType.SegmentTick)
-                    BridgeGraph.mediaCommand(if (up) RemoteCommand.VOLUME_UP else RemoteCommand.VOLUME_DOWN)
-                    volumeShownAt = SystemClock.elapsedRealtime()
-                }
-                true
-            }
-            .focusRequester(focus)
-            .focusable(),
+            .volumeRotary { up ->
+                volume.step(up)
+                volumeShownAt = SystemClock.elapsedRealtime()
+            },
     ) {
-        if (np.durationSeconds > 0) {
-            val fraction = (np.positionSeconds(now) / np.durationSeconds).toFloat()
-            CircularProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxSize().padding(2.dp).semantics { contentDescription = "Track progress" },
-                strokeWidth = 4.dp,
-            )
-        }
-        if (showVolume && np.volume != null) {
-            LevelIndicator(value = { np.volume ?: 0f }, modifier = Modifier.align(Alignment.CenterStart))
-        }
-
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
-            modifier = Modifier.fillMaxSize().padding(horizontal = 28.dp),
+            // Top inset keeps the player name clear of the system clock on a round screen.
+            modifier = Modifier.fillMaxSize().padding(start = 30.dp, end = 30.dp, top = 26.dp),
         ) {
             Text(
                 np.playerName.ifBlank { "iPhone" },
@@ -140,13 +125,13 @@ private fun Player(np: NowPlaying) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
             )
-            Spacer(Modifier.height(4.dp))
             Text(
                 np.title.ifBlank { "Unknown title" },
                 style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
                 textAlign = TextAlign.Center,
-                maxLines = 2,
+                maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp),
             )
             if (np.artist.isNotBlank()) {
                 Text(
@@ -159,42 +144,149 @@ private fun Player(np: NowPlaying) {
                 )
             }
             Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MediaIcon(R.drawable.ic_skip_previous, "Previous", np.can(RemoteCommand.PREVIOUS_TRACK)) { send(RemoteCommand.PREVIOUS_TRACK) }
-                FilledIconButton(
-                    onClick = { send(RemoteCommand.TOGGLE_PLAY_PAUSE) },
-                    enabled = np.can(RemoteCommand.TOGGLE_PLAY_PAUSE) || np.can(RemoteCommand.PLAY) || np.can(RemoteCommand.PAUSE),
-                    modifier = Modifier.size(56.dp),
-                ) {
-                    Icon(
-                        painterResource(if (np.isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
-                        contentDescription = if (np.isPlaying) "Pause" else "Play",
-                        modifier = Modifier.size(30.dp),
-                    )
-                }
+                PlayPause(np, now) { send(RemoteCommand.TOGGLE_PLAY_PAUSE) }
                 MediaIcon(R.drawable.ic_skip_next, "Next", np.can(RemoteCommand.NEXT_TRACK)) { send(RemoteCommand.NEXT_TRACK) }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-                MediaIcon(R.drawable.ic_volume_down, "Volume down", np.can(RemoteCommand.VOLUME_DOWN), small = true) {
-                    send(RemoteCommand.VOLUME_DOWN)
-                    volumeShownAt = SystemClock.elapsedRealtime()
-                }
-                MediaIcon(R.drawable.ic_volume_up, "Volume up", np.can(RemoteCommand.VOLUME_UP), small = true) {
-                    send(RemoteCommand.VOLUME_UP)
-                    volumeShownAt = SystemClock.elapsedRealtime()
-                }
+            Spacer(Modifier.height(6.dp))
+            IconButton(
+                onClick = onOpenVolume,
+                modifier = Modifier.size(44.dp).semantics { stateDescription = volume.percentText },
+            ) {
+                Icon(painterResource(R.drawable.ic_volume_up), contentDescription = "Volume", modifier = Modifier.size(22.dp))
             }
         }
+        if (showLevel) {
+            LevelIndicator(value = { volume.fraction }, modifier = Modifier.align(Alignment.CenterStart))
+        }
     }
+}
+
+/** Play/pause with the track's progress as a ring around it, as Wear OS media players draw it. */
+@Composable
+private fun PlayPause(np: NowPlaying, now: Long, onClick: () -> Unit) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(68.dp)) {
+        if (np.durationSeconds > 0) {
+            val fraction = (np.positionSeconds(now) / np.durationSeconds).toFloat()
+            CircularProgressIndicator(
+                progress = { fraction },
+                modifier = Modifier.fillMaxSize().semantics { contentDescription = "Track progress" },
+                strokeWidth = 3.dp,
+            )
+        }
+        FilledIconButton(
+            onClick = onClick,
+            enabled = np.can(RemoteCommand.TOGGLE_PLAY_PAUSE) || np.can(RemoteCommand.PLAY) || np.can(RemoteCommand.PAUSE),
+            modifier = Modifier.size(56.dp),
+        ) {
+            Icon(
+                painterResource(if (np.isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
+                contentDescription = if (np.isPlaying) "Pause" else "Play",
+                modifier = Modifier.size(30.dp),
+            )
+        }
+    }
+}
+
+/**
+ * The iPhone's volume, Wear OS style: a stepper (+ at the top, − at the bottom) with the level on the
+ * screen edge, and the bezel or crown to change it. iOS moves its volume in 16 steps, and each AMS
+ * command is exactly one step, so the stepper uses those steps.
+ */
+@Composable
+fun VolumeScreen() {
+    val media by BridgeGraph.media.collectAsStateWithLifecycle()
+    val np = media
+    val volume = rememberVolume(np)
+    val enabled = np != null
+
+    ScreenScaffold {
+        Box(Modifier.fillMaxSize().volumeRotary(volume::step)) {
+            Stepper(
+                value = volume.level,
+                onValueChange = { next -> if (next != volume.level) volume.step(next > volume.level) },
+                valueProgression = 0..STEPS,
+                decreaseIcon = { Icon(painterResource(R.drawable.ic_volume_down), contentDescription = "Volume down") },
+                increaseIcon = { Icon(painterResource(R.drawable.ic_volume_up), contentDescription = "Volume up") },
+                enabled = enabled,
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("iPhone volume", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(volume.percentText, style = MaterialTheme.typography.displaySmall)
+                    if (!enabled) Text("Not connected", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            StepperLevelIndicator(value = { volume.level }, valueProgression = 0..STEPS)
+        }
+    }
+}
+
+/**
+ * Volume as the UI shows it: optimistic on each step (so the bezel feels instant), then corrected by the
+ * level iOS reports back over AMS.
+ */
+private class VolumeState(private val haptic: () -> Unit) {
+    var level by mutableIntStateOf(0)
+    var known by androidx.compose.runtime.mutableStateOf(false)
+    /** iOS's exact level (it needn't sit on a step), or the optimistic one right after a step. */
+    var fraction by mutableFloatStateOf(0f)
+
+    val percentText: String get() = if (known) "${(fraction * 100).roundToInt()}%" else "–"
+
+    fun step(up: Boolean) {
+        val next = (level + if (up) 1 else -1).coerceIn(0, STEPS)
+        if (known && next == level) return // already at the end: no command, no tick
+        level = next
+        fraction = next / STEPS.toFloat()
+        haptic()
+        BridgeGraph.mediaCommand(if (up) RemoteCommand.VOLUME_UP else RemoteCommand.VOLUME_DOWN)
+    }
+}
+
+@Composable
+private fun rememberVolume(np: NowPlaying?): VolumeState {
+    val haptics = LocalHapticFeedback.current
+    val state = remember { VolumeState { haptics.performHapticFeedback(HapticFeedbackType.SegmentTick) } }
+    LaunchedEffect(np?.volume) {
+        np?.volume?.let {
+            state.level = (it * STEPS).roundToInt()
+            state.fraction = it
+            state.known = true
+        }
+    }
+    return state
+}
+
+/**
+ * Bezel and crown input. A Galaxy Watch4 Classic bezel click arrives as one ±136 px event (measured), so
+ * one click is one volume step. Smaller crown events accumulate to a step.
+ */
+@Composable
+private fun Modifier.volumeRotary(onStep: (up: Boolean) -> Unit): Modifier {
+    val focus = remember { FocusRequester() }
+    var accumulated by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    return this
+        .onRotaryScrollEvent { e ->
+            accumulated += e.verticalScrollPixels
+            if (abs(accumulated) >= ROTARY_STEP_PX) {
+                onStep(accumulated > 0)
+                accumulated = 0f
+            }
+            true
+        }
+        .focusRequester(focus)
+        .focusable()
 }
 
 /** iOS lists the commands the current player supports. An empty list means unknown: allow everything. */
 private fun NowPlaying.can(c: RemoteCommand) = supported.isEmpty() || c in supported
 
 @Composable
-private fun MediaIcon(icon: Int, label: String, enabled: Boolean, small: Boolean = false, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(if (small) 40.dp else 48.dp)) {
-        Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(if (small) 20.dp else 26.dp))
+private fun MediaIcon(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
+        Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(26.dp))
     }
 }
 
@@ -223,5 +315,7 @@ private fun EmptyMedia(title: String, detail: String) {
     }
 }
 
+/** iOS's volume steps (each VolumeUp/VolumeDown command moves one). */
+private const val STEPS = 16
 private const val ROTARY_STEP_PX = 48f
-private const val VOLUME_VISIBLE_MS = 2_000L
+private const val LEVEL_VISIBLE_MS = 2_000L

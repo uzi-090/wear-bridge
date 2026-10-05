@@ -112,7 +112,8 @@ private fun WatchApp(
                 )
             }
             composable("settings") { SettingsScreen() }
-            composable("media") { MediaScreen() }
+            composable("media") { MediaScreen(onOpenVolume = { nav.navigate("volume") }) }
+            composable("volume") { VolumeScreen() }
             composable("find") { io.wearbridge.watch.find.FindPhoneScreen() }
             composable("notifications") {
                 NotificationListScreen(

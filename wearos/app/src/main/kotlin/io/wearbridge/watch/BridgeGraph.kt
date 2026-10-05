@@ -154,7 +154,23 @@ object BridgeGraph {
     }
 
     fun mediaCommand(command: RemoteCommand) {
+        if (demoMode) return applyDemoMedia(command) // debug screenshots must never touch the real iPhone
         controller?.mediaCommand(command)
+    }
+
+    private fun applyDemoMedia(command: RemoteCommand) {
+        val np = mediaFlow.value ?: return
+        val step = 1f / 16
+        mediaFlow.value = when (command) {
+            RemoteCommand.VOLUME_UP -> np.copy(volume = ((np.volume ?: 0f) + step).coerceAtMost(1f))
+            RemoteCommand.VOLUME_DOWN -> np.copy(volume = ((np.volume ?: 0f) - step).coerceAtLeast(0f))
+            RemoteCommand.TOGGLE_PLAY_PAUSE -> np.copy(
+                state = if (np.isPlaying) io.wearbridge.ams.PlaybackState.PAUSED else io.wearbridge.ams.PlaybackState.PLAYING,
+                elapsedSeconds = np.positionSeconds(android.os.SystemClock.elapsedRealtime()),
+                elapsedAtMillis = android.os.SystemClock.elapsedRealtime(),
+            )
+            else -> np
+        }
     }
 
     fun reconnect() {
