@@ -46,6 +46,7 @@ class BridgeService : Service() {
             BridgeGraph.notifier.serviceNotification("Starting…"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
         )
+        BridgeGraph.notifier.clearOrphans()
         controller = BridgeController(applicationContext, BridgeGraph.repository, BridgeGraph.notifier).also {
             BridgeGraph.controller = it
             it.start()

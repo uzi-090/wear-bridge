@@ -144,7 +144,12 @@ class BridgeController(
             }
             is Msg.Characteristic -> {
                 if (msg.uuid == AncsUuids.NOTIFICATION_SOURCE) {
-                    NotificationSourceEvent.parse(msg.value)?.let { sourceArrival[it.uid] = SystemClock.elapsedRealtime() }
+                    NotificationSourceEvent.parse(msg.value)?.let {
+                        sourceArrival[it.uid] = SystemClock.elapsedRealtime()
+                        if (it.category == io.wearbridge.ancs.Category.UNKNOWN) {
+                            DiagLog.i("ns unknown category code=${msg.value[2].toInt() and 0xFF} flags=${it.flags}")
+                        }
+                    }
                 }
                 ancs?.onCharacteristicChanged(msg.uuid, msg.value)
             }
@@ -329,7 +334,10 @@ class BridgeController(
             val alert = !event.isSilent && (isNew || wn.isIncomingCall && !event.isPreExisting) &&
                 (wn.isIncomingCall || elapsed - lastAlertAt > ALERT_COALESCE_MS)
             if (alert) lastAlertAt = elapsed
-            notifier.show(wn, alert)
+            // Replayed (pre-existing) notifications go to the in-app inbox only. Posting them all
+            // floods the watch and Android's per-app notification quota. A ringing call is the exception.
+            val surface = !event.isPreExisting || wn.isIncomingCall || notifier.isPosted(notification.uid)
+            if (surface) notifier.show(wn, alert)
 
             val latency = sourceArrival.remove(notification.uid)?.let { elapsed - it }
             DiagLog.i(
@@ -339,6 +347,7 @@ class BridgeController(
         }
 
         override fun onNotificationRemoved(uid: Long) {
+            DiagLog.i("notif REMOVED uid=${Redact.uid(uid)}")
             repository.remove(uid)
             notifier.cancel(uid)
             sourceArrival.remove(uid)
@@ -347,7 +356,7 @@ class BridgeController(
         override fun onAppName(appIdentifier: String, displayName: String) {
             repository.updateAppName(appIdentifier, displayName)
             // Re-post visible notifications from this app so they show the proper name (silently).
-            repository.items.value.filter { it.ancs.appIdentifier == appIdentifier && !it.stale }
+            repository.items.value.filter { it.ancs.appIdentifier == appIdentifier && !it.stale && notifier.isPosted(it.uid) }
                 .forEach { notifier.show(it, alert = false) }
         }
 

@@ -25,6 +25,17 @@ class MirrorNotifier(private val context: Context) {
 
     private val manager = NotificationManagerCompat.from(context)
 
+    /**
+     * Mirrors currently posted, oldest first. Android drops everything past 50 notifications per app
+     * (found on hardware: a reconnect replay filled the quota and an incoming call was rejected), so we
+     * keep well below that and evict the oldest non-call first.
+     */
+    private val posted = LinkedHashSet<Long>()
+    private val callUids = HashSet<Long>()
+
+    @Synchronized
+    fun isPosted(uid: Long): Boolean = uid in posted
+
     fun createChannels() {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannels(
@@ -93,12 +104,40 @@ class MirrorNotifier(private val context: Context) {
         } else {
             builder.setPriority(if (channel == CHANNEL_ALERT) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
         }
+        synchronized(this) {
+            posted.remove(n.uid)
+            posted.add(n.uid)
+            if (n.isIncomingCall) callUids.add(n.uid)
+            while (posted.size > MAX_POSTED) {
+                val victim = posted.firstOrNull { it !in callUids } ?: break
+                posted.remove(victim)
+                manager.cancel(TAG, victim.toInt())
+            }
+        }
         manager.notify(TAG, n.uid.toInt(), builder.build())
     }
 
-    fun cancel(uid: Long) = manager.cancel(TAG, uid.toInt())
+    @Synchronized
+    fun cancel(uid: Long) {
+        posted.remove(uid)
+        callUids.remove(uid)
+        manager.cancel(TAG, uid.toInt())
+    }
 
-    fun cancelAll() = manager.cancelAll()
+    /** Cancels mirrored notifications only. The foreground-service notification stays. */
+    @Synchronized
+    fun cancelAll() {
+        posted.forEach { manager.cancel(TAG, it.toInt()) }
+        posted.clear()
+        callUids.clear()
+    }
+
+    /** Clears mirrors left behind by a previous process (they can't be acted on any more). */
+    fun clearOrphans() {
+        context.getSystemService(NotificationManager::class.java).activeNotifications
+            .filter { it.tag == TAG }
+            .forEach { manager.cancel(TAG, it.id) }
+    }
 
     fun serviceNotification(statusText: String) =
         NotificationCompat.Builder(context, CHANNEL_SERVICE)
@@ -138,6 +177,7 @@ class MirrorNotifier(private val context: Context) {
         const val CHANNEL_CALLS = "calls"
         const val CHANNEL_SERVICE = "service"
         const val SERVICE_NOTIFICATION_ID = 1
+        private const val MAX_POSTED = 24
         private const val TAG = "ios"
         private const val GROUP_PREFIX = "ios:"
     }

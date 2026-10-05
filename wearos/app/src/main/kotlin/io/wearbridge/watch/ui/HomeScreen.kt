@@ -51,6 +51,7 @@ fun HomeScreen(
     val items by BridgeGraph.repository.items.collectAsStateWithLifecycle()
     val phone by BridgeGraph.phoneName.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
+    val context = LocalContext.current
 
     ScreenScaffold(scrollState = listState) { padding ->
         TransformingLazyColumn(state = listState, contentPadding = padding) {
@@ -81,6 +82,16 @@ fun HomeScreen(
             if (!hasPermissions) {
                 item {
                     Button(onClick = onRequestPermissions, modifier = Modifier.fillMaxWidth(), label = { Text("Allow Bluetooth") })
+                }
+            }
+            if (hasPermissions && !BridgeGraph.notifier.canUseFullScreen) {
+                item {
+                    FilledTonalButton(
+                        onClick = { openFullScreenSettings(context) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Allow full-screen calls") },
+                        secondaryLabel = { Text("Show iPhone calls over the watch face") },
+                    )
                 }
             }
             if (link.state == LinkState.ERROR) {
@@ -146,5 +157,24 @@ private fun StatusRow(link: LinkSnapshot) {
             style = MaterialTheme.typography.titleMedium,
             modifier = Modifier.padding(start = 8.dp),
         )
+    }
+}
+
+/** Android 14+ settings screen for full-screen notifications. Falls back to the app's info page. */
+private fun openFullScreenSettings(context: android.content.Context) {
+    val pkg = android.net.Uri.fromParts("package", context.packageName, null)
+    val intents = buildList {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            add(android.content.Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg))
+        }
+        add(android.content.Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg))
+    }
+    for (intent in intents) {
+        try {
+            context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        } catch (_: android.content.ActivityNotFoundException) {
+            // try the next one
+        }
     }
 }
