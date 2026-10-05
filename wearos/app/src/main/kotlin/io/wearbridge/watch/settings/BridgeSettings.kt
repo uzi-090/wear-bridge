@@ -21,6 +21,19 @@ class BridgeSettings(context: Context) {
         _endCallFromWatch.value = enabled
     }
 
+    private val _history = MutableStateFlow(prefs.getBoolean(KEY_HISTORY, false))
+
+    /**
+     * Keep notifications for 24 hours after the iPhone clears them (in memory only). Off by default:
+     * the inbox then shows exactly what's on the iPhone right now. Use [io.wearbridge.watch.BridgeGraph.setHistory].
+     */
+    val history: StateFlow<Boolean> = _history
+
+    internal fun setHistoryFlag(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_HISTORY, enabled).apply()
+        _history.value = enabled
+    }
+
     private val _popupStyle = MutableStateFlow(loadPopupStyle())
 
     /**
@@ -48,6 +61,7 @@ class BridgeSettings(context: Context) {
         const val KEY_END_CALL = "experimental_end_call"
         const val KEY_POPUP = "popup_style"
         const val KEY_SUBTLE_LEGACY = "subtle_popups"
+        const val KEY_HISTORY = "history"
     }
 }
 

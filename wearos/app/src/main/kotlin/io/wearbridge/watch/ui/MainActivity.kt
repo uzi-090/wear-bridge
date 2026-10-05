@@ -111,11 +111,18 @@ private fun WatchApp(
             }
             composable("settings") { SettingsScreen() }
             composable("notifications") {
-                NotificationListScreen(onOpen = { uid -> nav.navigate("notification/$uid") })
+                NotificationListScreen(
+                    onOpen = { uid -> nav.navigate("notification/$uid") },
+                    onOpenThread = { uid -> nav.navigate("thread/$uid") },
+                )
+            }
+            composable("thread/{uid}") { entry ->
+                val uid = entry.arguments?.getString("uid")?.toLongOrNull() ?: -1L
+                ThreadScreen(uid, onOpen = { nav.navigate("notification/$it") })
             }
             composable("notification/{uid}") { entry ->
                 val uid = entry.arguments?.getString("uid")?.toLongOrNull() ?: -1L
-                NotificationDetailScreen(uid)
+                NotificationDetailScreen(uid, onDeleted = { nav.popBackStack() })
             }
             composable("diagnostics") { DiagnosticsScreen() }
         }

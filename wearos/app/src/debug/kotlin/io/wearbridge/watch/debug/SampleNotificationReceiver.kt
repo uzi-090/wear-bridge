@@ -13,6 +13,11 @@ import java.time.LocalDateTime
  * Debug-only. `adb shell am broadcast -a io.wearbridge.watch.debug.SAMPLE -p io.wearbridge.watch`
  * posts a mirrored-looking WhatsApp notification with fake content through the real notifier,
  * so pop-up behaviour can be tested and screenshotted without real messages.
+ *
+ * Extras: `--es title/text/app/name`, `--el uid`, `--es style FULL|SUBTLE`, `--ez quiet true` (no post),
+ * `--ez cleared true` (then removed by "iOS", to test history), and `--ez demo true`: clears the watch
+ * inbox and ignores real notifications until the app restarts (`am force-stop`), so screenshots only
+ * ever show fake content.
  */
 class SampleNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
@@ -21,24 +26,33 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             io.wearbridge.watch.settings.PopupStyle.entries.firstOrNull { it.name == name }
                 ?.let(BridgeGraph.settings::setPopupStyle)
         }
+        if (intent.getBooleanExtra("demo", false)) {
+            BridgeGraph.demoMode = true
+            BridgeGraph.deleteAll()
+            io.wearbridge.watch.diagnostics.DiagLog.i("demo mode ON")
+        }
         if (intent.getBooleanExtra("style_only", false)) return
         val uid = intent.getLongExtra("uid", 900_000L + (System.currentTimeMillis() / 1000 % 1000))
         val sample = AncsNotification(
             uid = uid,
             category = Category.SOCIAL,
             flags = 0x10,
-            appIdentifier = "net.whatsapp.WhatsApp",
-            appDisplayName = "WhatsApp",
+            appIdentifier = intent.getStringExtra("app") ?: "net.whatsapp.WhatsApp",
+            appDisplayName = intent.getStringExtra("name") ?: "WhatsApp",
             title = intent.getStringExtra("title") ?: "Sample Sender",
             subtitle = "",
             message = intent.getStringExtra("text") ?: "This is a sample message to test how notifications appear.",
             messageSize = null,
-            date = LocalDateTime.now(),
+            date = LocalDateTime.now().minusMinutes(intent.getLongExtra("ago", 0)),
             positiveActionLabel = null,
             negativeActionLabel = "Clear",
         )
         val n = WatchNotification(sample, System.currentTimeMillis())
         BridgeGraph.repository.upsert(n)
-        BridgeGraph.notifier.show(n, alert = true)
+        if (!intent.getBooleanExtra("quiet", false)) BridgeGraph.notifier.show(n, alert = true)
+        if (intent.getBooleanExtra("cleared", false)) {
+            BridgeGraph.repository.remove(uid)
+            BridgeGraph.notifier.cancel(uid)
+        }
     }
 }

@@ -58,7 +58,7 @@ class NotificationEngine(
         purgeJob?.cancel()
         purgeJob = scope.launch {
             delay(STALE_PURGE_MS)
-            repository.purgeStale().forEach(notifier::cancel)
+            repository.purgeStale().forEach(notifier::cancel) // kept as history when that's on
         }
     }
 
@@ -73,6 +73,12 @@ class NotificationEngine(
     }
 
     override fun onNotification(notification: AncsNotification, event: NotificationSourceEvent) {
+        if (io.wearbridge.watch.BridgeGraph.demoMode) return // debug screenshots: real content stays off screen
+        if (repository.isDeleted(notification.uid)) {
+            // Deleted on the watch earlier. iOS still has it and replays or updates it: stay quiet.
+            sourceArrival.remove(notification.uid)
+            return
+        }
         if (notification.category in CALL_CATEGORIES) {
             // System call-UI labels (e.g. "Answer"), not user content. Logged to verify action semantics.
             DiagLog.i("call actions cat=${notification.category} positive=${notification.positiveActionLabel} negative=${notification.negativeActionLabel}")

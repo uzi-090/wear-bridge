@@ -20,6 +20,7 @@ fun SettingsScreen() {
     val settings = BridgeGraph.settings
     val popup by settings.popupStyle.collectAsStateWithLifecycle()
     val endCall by settings.endCallFromWatch.collectAsStateWithLifecycle()
+    val history by settings.history.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
 
     ScreenScaffold(scrollState = listState) { padding ->
@@ -32,6 +33,15 @@ fun SettingsScreen() {
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Pop-up style: ${popup.label}") },
                     secondaryLabel = { Text(popup.description) },
+                )
+            }
+            item {
+                SwitchButton(
+                    checked = history,
+                    onCheckedChange = BridgeGraph::setHistory,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Keep history") },
+                    secondaryLabel = { Text("Keep notifications for 24 hours after you clear them on iPhone. Never for hidden apps.") },
                 )
             }
             item { ListHeader { Text("Experimental") } }

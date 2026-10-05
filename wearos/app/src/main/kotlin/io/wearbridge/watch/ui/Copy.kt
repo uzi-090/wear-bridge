@@ -56,6 +56,14 @@ object Copy {
     const val TRUNCATED = "Continued on iPhone"
     const val MASKED = "Content hidden"
     const val MASKED_DETAIL = "Content is hidden on your watch for this app."
+    const val CLEARED_SHORT = "Cleared on iPhone"
+    const val CLEARED_HISTORY = "Cleared on your iPhone. Kept here as history."
+    const val DELETE = "Delete from watch"
+    const val DELETE_DETAIL = "Stays on your iPhone"
+    const val CLEAR_ALL = "Clear all"
+    const val CLEAR_ALL_DETAIL = "Removes notifications from your watch. They stay on your iPhone."
+
+    fun moreMessages(n: Int) = if (n == 1) "+1 more" else "+$n more"
 
     private val TIME = DateTimeFormatter.ofPattern("H:mm")
     private val DAY = DateTimeFormatter.ofPattern("d MMM")

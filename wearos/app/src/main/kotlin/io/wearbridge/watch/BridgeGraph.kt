@@ -48,9 +48,16 @@ object BridgeGraph {
     @Volatile
     internal var controller: ConnectionManager? = null
 
+    /**
+     * Debug builds only (set by the debug SAMPLE receiver): real iPhone notifications are ignored, so
+     * the inbox can be screenshotted with fake content. Cleared by restarting the app.
+     */
+    @Volatile
+    var demoMode = false
+
     fun init(app: Application) {
-        repository = NotificationRepository()
         settings = BridgeSettings(app)
+        repository = NotificationRepository(historyEnabled = { settings.history.value })
         policy = PolicyStore(app)
         icons = AppIconStore(app)
         notifier = MirrorNotifier(app, settings).also { it.createChannels() }
@@ -63,6 +70,22 @@ object BridgeGraph {
         } else {
             c.performAction(uid, action)
         }
+    }
+
+    /** Removes a notification from the watch only (the iPhone keeps it). */
+    fun delete(uid: Long) {
+        repository.delete(uid)
+        notifier.cancel(uid)
+    }
+
+    /** Clears the watch inbox (calls in progress excepted). The iPhone keeps its notifications. */
+    fun deleteAll() {
+        repository.deleteAll().forEach(notifier::cancel)
+    }
+
+    fun setHistory(enabled: Boolean) {
+        settings.setHistoryFlag(enabled)
+        if (!enabled) repository.clearHistory()
     }
 
     fun reconnect() {
