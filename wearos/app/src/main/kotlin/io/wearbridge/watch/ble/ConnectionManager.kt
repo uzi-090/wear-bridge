@@ -107,14 +107,20 @@ class ConnectionManager(
         when (msg) {
             is Msg.Link -> dispatch(msg.event)
             is Msg.CentralConnected -> {
+                val waiting = sm.snapshot.state in setOf(LinkState.ADVERTISING, LinkState.RECONNECTING, LinkState.ERROR)
                 val current = device
-                if (current != null && current.address != msg.device.address) {
-                    DiagLog.i("ignoring second central ${Redact.device(msg.device)}")
-                    return
-                }
-                if (current == null && sm.snapshot.state in setOf(LinkState.ADVERTISING, LinkState.RECONNECTING, LinkState.ERROR)) {
-                    device = msg.device
-                    dispatch(LinkEvent.CentralConnected)
+                when {
+                    // While waiting for the iPhone, a remembered device is stale (for example after a
+                    // Bluetooth toggle, where no disconnect callback arrives). Found on hardware.
+                    waiting -> {
+                        if (current != null && current.address != msg.device.address) {
+                            DiagLog.i("replacing stale central ${Redact.device(current)} with ${Redact.device(msg.device)}")
+                        }
+                        device = msg.device
+                        dispatch(LinkEvent.CentralConnected)
+                    }
+                    current != null && current.address != msg.device.address ->
+                        DiagLog.i("ignoring second central ${Redact.device(msg.device)}")
                 }
             }
             is Msg.CentralDisconnected -> if (msg.device.address == device?.address) {
@@ -161,7 +167,10 @@ class ConnectionManager(
             LinkEffect.StartAdvertising ->
                 if (peripheral.open()) peripheral.startAdvertising() else post(Msg.Link(LinkEvent.AdvertisingFailed(unsupported = false)))
             LinkEffect.StopAdvertising -> peripheral.stopAdvertising()
-            LinkEffect.ClosePeripheral -> peripheral.close()
+            LinkEffect.ClosePeripheral -> {
+                peripheral.close()
+                device = null // closing the server drops every link, and no per-device callback follows
+            }
             LinkEffect.OpenClient -> openClient()
             LinkEffect.CloseClient -> closeClient()
             LinkEffect.Discover -> discover()
