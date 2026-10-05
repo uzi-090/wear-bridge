@@ -93,12 +93,8 @@ class AncsSession(
 
                 val request = Request.Attributes(effective)
                 val queuedIndex = queue.indexOfFirst { it is Request.Attributes && it.event.uid == event.uid }
-                when {
-                    queuedIndex >= 0 -> queue[queuedIndex] = request
-                    // Calls are latency-critical: jump ahead of other fetches, but stay behind user actions.
-                    event.category == Category.INCOMING_CALL -> queue.add(queue.count { it is Request.Action }, request)
-                    else -> queue.addLast(request)
-                }
+                if (queuedIndex >= 0) queue.removeAt(queuedIndex)
+                enqueue(request)
                 pump()
             }
         }
@@ -115,9 +111,30 @@ class AncsSession(
             ActionId.NEGATIVE -> event.hasNegativeAction
         }
         if (!offered) return false
-        queue.add(queue.count { it is Request.Action }, Request.Action(uid, action))
+        enqueue(Request.Action(uid, action))
         pump()
         return true
+    }
+
+    /** Inserts after everything of equal or higher priority, so each class stays FIFO. */
+    private fun enqueue(request: Request) {
+        val p = priority(request)
+        val at = queue.indexOfFirst { priority(it) > p }
+        if (at < 0) queue.addLast(request) else queue.add(at, request)
+    }
+
+    /**
+     * Lower values go first. On reconnect iOS replays every existing notification, and
+     * fetching that backlog can take seconds, so fresh notifications must not queue behind it.
+     */
+    private fun priority(request: Request): Int = when (request) {
+        is Request.Action -> 0
+        is Request.Attributes -> when {
+            request.event.category == Category.INCOMING_CALL -> 1
+            !request.event.isPreExisting -> 2
+            else -> 4
+        }
+        is Request.App -> 3
     }
 
     fun onControlPointWriteResult(token: Int, status: Int) {
@@ -185,7 +202,7 @@ class AncsSession(
         val appId = notification.appIdentifier
         listener.onNotification(notification.copy(appDisplayName = appId?.let(appNames::get)), event)
         if (appId != null && appId !in appNames && appNamesRequested.add(appId)) {
-            queue.addLast(Request.App(appId))
+            enqueue(Request.App(appId))
         }
     }
 

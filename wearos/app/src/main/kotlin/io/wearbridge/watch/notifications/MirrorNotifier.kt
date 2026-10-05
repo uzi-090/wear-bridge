@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import io.wearbridge.ancs.ActionId
+import io.wearbridge.ancs.EventFlags
 import io.wearbridge.watch.R
 import io.wearbridge.watch.ui.IncomingCallActivity
 import io.wearbridge.watch.ui.MainActivity
@@ -60,7 +61,14 @@ class MirrorNotifier(private val context: Context) {
         if (!canPost) return
         val a = n.ancs
         val body = listOf(a.subtitle, a.message).filter { it.isNotBlank() }.joinToString("\n")
-        val builder = NotificationCompat.Builder(context, if (n.isIncomingCall) CHANNEL_CALLS else if (alert) CHANNEL_ALERT else CHANNEL_QUIET)
+        // The channel (importance) follows iOS's own Silent flag and stays stable across updates.
+        // [alert] only decides whether this particular post buzzes.
+        val channel = when {
+            n.isIncomingCall -> CHANNEL_CALLS
+            a.flags and EventFlags.SILENT != 0 -> CHANNEL_QUIET
+            else -> CHANNEL_ALERT
+        }
+        val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_bridge)
             .setContentTitle(a.title.ifBlank { n.appLabel })
             .setContentText(body)
@@ -83,7 +91,7 @@ class MirrorNotifier(private val context: Context) {
                 .setOngoing(true)
                 .setFullScreenIntent(callIntent(), true)
         } else {
-            builder.setPriority(if (alert) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
+            builder.setPriority(if (channel == CHANNEL_ALERT) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
         }
         manager.notify(TAG, n.uid.toInt(), builder.build())
     }

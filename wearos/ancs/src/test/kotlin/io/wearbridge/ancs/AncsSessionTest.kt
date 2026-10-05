@@ -133,6 +133,22 @@ class AncsSessionTest {
     }
 
     @Test
+    fun `new notifications jump ahead of the pre-existing replay backlog`() {
+        val pre = EventFlags.PRE_EXISTING
+        session.onNotificationSource(nsPacket(EventId.ADDED, pre, Category.OTHER, 1))
+        session.onNotificationSource(nsPacket(EventId.ADDED, pre, Category.OTHER, 2))
+        session.onNotificationSource(nsPacket(EventId.ADDED, pre, Category.OTHER, 3))
+        session.onNotificationSource(nsPacket(EventId.ADDED, 0, Category.SOCIAL, 4)) // fresh WhatsApp
+        respond(1, appId = "replay.app")
+        assertArrayEquals(bytes(4, 0, 0, 0), transport.writes.last().second.copyOfRange(1, 5))
+        respond(4, appId = "replay.app")
+        // The app-name lookup comes next (it beats the backlog), then the replay continues in order.
+        assertEquals(CommandId.GET_APP_ATTRIBUTES, transport.lastCommand)
+        ack(); session.onDataSource(appResponse("replay.app", "Replay"))
+        assertArrayEquals(bytes(2, 0, 0, 0), transport.writes.last().second.copyOfRange(1, 5))
+    }
+
+    @Test
     fun `action is sent with the iOS action id and reported on ack`() {
         session.onNotificationSource(nsPacket(EventId.ADDED, callFlags, Category.INCOMING_CALL, 9))
         respond(9, labels = true)
