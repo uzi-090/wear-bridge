@@ -66,7 +66,12 @@ class BridgePeripheral(
     }
 
     /** Largest notification payload for [device]: ATT_MTU − 3. */
-    fun maxPayload(device: BluetoothDevice): Int = (mtus[device.address] ?: 23) - 3
+    /**
+     * Largest notification payload for [device]: ATT_MTU − 3, but never above 512, the Bluetooth maximum
+     * for one attribute value. Found on hardware: iOS negotiated MTU 517, a 514-byte chunk made Android
+     * throw, and that stopped the whole link (fixed here and made non-fatal in ConnectionManager).
+     */
+    fun maxPayload(device: BluetoothDevice): Int = minOf((mtus[device.address] ?: 23) - 3, MAX_ATTRIBUTE_BYTES)
 
     /**
      * Queues notifications on a bridge characteristic (SETTINGS, EVENTS, DEVICE_STATUS). Android allows
@@ -87,13 +92,19 @@ class BridgePeripheral(
         val characteristic = server?.getService(BridgeUuids.SERVICE)?.getCharacteristic(next.characteristic)
             ?: run { notifyQueue.clear(); notifyInFlight = false; return }
         notifyInFlight = true
-        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            server?.notifyCharacteristicChanged(device, characteristic, false, value) == android.bluetooth.BluetoothStatusCodes.SUCCESS
-        } else {
-            @Suppress("DEPRECATION")
-            characteristic.value = value
-            @Suppress("DEPRECATION")
-            server?.notifyCharacteristicChanged(device, characteristic, false) == true
+        val started = try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                server?.notifyCharacteristicChanged(device, characteristic, false, value) == android.bluetooth.BluetoothStatusCodes.SUCCESS
+            } else {
+                @Suppress("DEPRECATION")
+                characteristic.value = value
+                @Suppress("DEPRECATION")
+                server?.notifyCharacteristicChanged(device, characteristic, false) == true
+            }
+        } catch (e: RuntimeException) {
+            // e.g. IllegalArgumentException for an oversized value: drop this message, never the link.
+            DiagLog.w("bridge notify threw ${e::class.simpleName} size=${value.size}")
+            false
         }
         if (!started) {
             DiagLog.w("bridge notify refused, dropping ${notifyQueue.size + 1} chunks")
@@ -345,6 +356,7 @@ class BridgePeripheral(
     }
 
     private companion object {
+        const val MAX_ATTRIBUTE_BYTES = 512
         val WRITABLE = setOf(BridgeUuids.CONTROL, BridgeUuids.SETTINGS, BridgeUuids.AUTH, BridgeUuids.CONTACTS)
     }
 }

@@ -111,7 +111,19 @@ class ConnectionManager(
     }
 
     fun start() {
-        scope.launch { for (msg in inbox) handle(msg) }
+        scope.launch {
+            for (msg in inbox) {
+                // One bad message must never stop the link: before this guard, a single exception ended
+                // this loop and silently stopped every later notification and call (found on hardware).
+                try {
+                    handle(msg)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    DiagLog.w("link: ${msg::class.simpleName} failed ${e::class.simpleName}")
+                }
+            }
+        }
         registerReceivers()
         post(
             Msg.Link(
