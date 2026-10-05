@@ -27,7 +27,7 @@
 
 | # | Step | Expected | Observed | Pass |
 |---|---|---|---|---|
-| M1.1 | Watch: Bridge open. iPhone: Settings → Bluetooth. Does the watch appear under *Other Devices*? | Appears (ANCS solicitation) | | |
+| M1.1 | Watch: Bridge open. iPhone: Settings → Bluetooth. Does the watch appear under *Other Devices*? | Appears (ANCS solicitation) | **2026-10-05: No.** The watch was advertising (connectable, legacy, 1 s interval, ANCS solicitation in the ADV packet, bridge UUID in the scan response) but iOS Settings didn't list it. → Pair via the companion app (M1.2) | ✘ |
 | M1.2 | If not: PairingPOC → *Find Watch* (then *Show nearby devices* if needed) | Watch found, iOS pairing prompt | | |
 | M1.3 | Confirm the pairing codes on both devices | Watch: `bond state 11 → 12`, `link … → DISCOVERING_SERVICES` | | |
 | M1.4 | Watch log shows `ancs=true` and `ancs subscribed`, and the watch shows **Connected** | READY | | |
@@ -48,6 +48,10 @@
 | M1.19 | Reboot the iPhone (unlock once) | Reconnects. Record the time to READY | | |
 
 Record firmware: One UI Watch version, Wear OS version, watch security patch, iOS version.
+
+**Test rig (2026-10-05):** Galaxy Watch4 Classic LTE (SM-R895F), Android 16 / API 36 (Wear OS 6, One UI 8 Watch), security patch 2026-08-05. iPhone 16 Pro (iOS version: TBD).
+
+**Watch-side verified:** app installs, `connectedDevice` FGS runs, bridge GATT service is registered (`status=0`), LE advertising starts with solicitation (`dumpsys bluetooth_manager`: connectable legacy set, interval 1600 × 0.625 ms).
 
 ## Later phases (integration matrix)
 iPhone locked/unlocked × iOS app foreground/background/force-quit × watch screen on/off/charging ×
