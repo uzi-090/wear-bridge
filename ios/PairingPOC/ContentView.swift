@@ -64,8 +64,14 @@ struct ContentView: View {
             }
         case .connected:
             VStack(spacing: 12) {
+                NavigationLink {
+                    NotificationSettingsView(link: link)
+                } label: {
+                    Label("Notifications", systemImage: "bell.badge")
+                }
+                .buttonStyle(PrimaryButtonStyle())
                 Button("Send Test Ping", action: link.sendPing)
-                    .buttonStyle(PrimaryButtonStyle())
+                    .font(.callout)
                 if let lastPing = link.lastPing {
                     Text("Watch replied \(lastPing.formatted(.relative(presentation: .named)))")
                         .font(.footnote)

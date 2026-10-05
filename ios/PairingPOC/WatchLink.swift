@@ -8,6 +8,7 @@ enum BridgeUUID {
     static let service = CBUUID(string: "9C664C93-19F2-435D-895A-A40751731AE1")
     static let pairing = CBUUID(string: "9C664C93-19F2-435D-0001-A40751731AE1")
     static let control = CBUUID(string: "9C664C93-19F2-435D-0002-A40751731AE1")
+    static let settings = CBUUID(string: "9C664C93-19F2-435D-0006-A40751731AE1")
 }
 
 /// Phase 1 companion: finds the watch, forces LE pairing by reading an encrypted characteristic, then
@@ -45,10 +46,15 @@ final class WatchLink: NSObject {
     private(set) var showingAllNearby = false
     /// Redacted: states and error codes only, never names or identifiers.
     private(set) var diagnostics: [String] = []
+    /// The watch's notification settings (the watch stores and applies them). nil until received.
+    private(set) var watchSettings: WatchSettings?
 
     @ObservationIgnored private var central: CBCentralManager!
     @ObservationIgnored private var peripheral: CBPeripheral?
     @ObservationIgnored private var control: CBCharacteristic?
+    @ObservationIgnored private var settingsCharacteristic: CBCharacteristic?
+    @ObservationIgnored private var settingsReassembler = BridgeReassembler()
+    @ObservationIgnored private var nextMessageId: UInt8 = 0
     /// Set when pairing fails. Stops auto-reconnect from silently starting another attempt (found on hardware).
     @ObservationIgnored private var pairingFailed = false
 
@@ -103,10 +109,42 @@ final class WatchLink: NSObject {
         p.writeValue(Data([0x01]), for: c, type: .withResponse)
     }
 
+    // MARK: - Notification settings (stored and applied on the watch)
+
+    func setMode(_ mode: FilterMode) {
+        watchSettings?.mode = mode // optimistic. The watch answers with the authoritative snapshot.
+        send(.setMode, SettingsCodec.encodeSetMode(mode))
+    }
+
+    func setRule(for app: WatchApp, enabled: Bool? = nil, vibrate: Bool? = nil, hideContent: Bool? = nil) {
+        guard let index = watchSettings?.apps.firstIndex(where: { $0.id == app.id }) else { return }
+        var updated = app
+        if let enabled { updated.enabled = enabled }
+        if let vibrate { updated.vibrate = vibrate }
+        if let hideContent { updated.hideContent = hideContent }
+        watchSettings?.apps[index] = updated
+        send(.setAppRule, SettingsCodec.encodeSetAppRule(
+            bundleId: updated.id, enabled: updated.enabled, vibrate: updated.vibrate, hideContent: updated.hideContent))
+    }
+
+    func refreshSettings() { send(.getSettings, []) }
+
+    private func send(_ type: BridgeProtocol.MessageType, _ payload: [UInt8]) {
+        guard let p = peripheral, let c = settingsCharacteristic, p.state == .connected else { return }
+        nextMessageId &+= 1
+        // One ATT packet per chunk (no prepared writes, which the watch rejects).
+        let maxChunk = min(p.maximumWriteValueLength(for: .withoutResponse), 182)
+        for chunk in BridgeProtocol.split(type: type, messageId: nextMessageId, payload: payload, maxChunkBytes: maxChunk) {
+            p.writeValue(chunk, for: c, type: .withResponse)
+        }
+    }
+
     func forgetWatch() {
         if let p = peripheral { central.cancelPeripheralConnection(p) }
         peripheral = nil
         control = nil
+        settingsCharacteristic = nil
+        watchSettings = nil
         watchName = nil
         protocolVersion = nil
         UserDefaults.standard.removeObject(forKey: Self.savedIdentifierKey)
@@ -172,6 +210,23 @@ final class WatchLink: NSObject {
             pairingDidFail("att code=\(att.code.rawValue)")
         } else {
             phase = .needsAttention("Watch connection failed. Bluetooth connection became unavailable.")
+        }
+    }
+
+    private func receiveSettingsChunk(_ chunk: Data) {
+        switch settingsReassembler.accept(chunk) {
+        case .incomplete:
+            break
+        case .error(let reason):
+            note("settings error: \(reason)")
+        case .complete(let message):
+            guard message.type == BridgeProtocol.MessageType.settings.rawValue else { return }
+            do {
+                watchSettings = try SettingsCodec.decodeSnapshot(message.payload)
+                note("settings: \(watchSettings?.apps.count ?? 0) apps")
+            } catch {
+                note("settings: malformed snapshot")
+            }
         }
     }
 
@@ -249,6 +304,8 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
         error: Error?
     ) {
         note("disconnected autoReconnect=\(isReconnecting) code=\((error as NSError?)?.code ?? 0)")
+        watchSettings = nil // only show what the watch confirms
+        settingsReassembler.reset()
         // Dropping mid-pairing is how a rejected pairing usually shows up.
         if phase == .pairing && !hasSavedWatch { pairingDidFail("link dropped during pairing") }
         guard !pairingFailed, peripheral.identifier == self.peripheral?.identifier, hasSavedWatch else { return }
@@ -269,12 +326,13 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
             phase = .needsAttention("This device isn't running Bridge. Open Bridge on your watch and try again.")
             return
         }
-        peripheral.discoverCharacteristics([BridgeUUID.pairing, BridgeUUID.control], for: service)
+        peripheral.discoverCharacteristics([BridgeUUID.pairing, BridgeUUID.control, BridgeUUID.settings], for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let error { return handle(error: error, context: "characteristics") }
         control = service.characteristics?.first { $0.uuid == BridgeUUID.control }
+        settingsCharacteristic = service.characteristics?.first { $0.uuid == BridgeUUID.settings }
         guard let pairing = service.characteristics?.first(where: { $0.uuid == BridgeUUID.pairing }) else {
             phase = .needsAttention("Your watch is running an incompatible version of Bridge.")
             return
@@ -285,6 +343,10 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if characteristic.uuid == BridgeUUID.settings {
+            if let value = characteristic.value { receiveSettingsChunk(value) }
+            return
+        }
         if let error { return handle(error: error, context: "pairing read") }
         guard characteristic.uuid == BridgeUUID.pairing, let value = characteristic.value, !value.isEmpty else { return }
         protocolVersion = Int(value[value.startIndex])
@@ -292,15 +354,26 @@ extension WatchLink: @MainActor CBPeripheralDelegate {
         UserDefaults.standard.set(peripheral.identifier.uuidString, forKey: Self.savedIdentifierKey)
         phase = .connected
         note("bonded, protocol v\(protocolVersion ?? 0)")
+        // Subscribing makes the watch send its current settings.
+        if let s = settingsCharacteristic { peripheral.setNotifyValue(true, for: s) }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == BridgeUUID.control else {
+            if let error { note("settings write failed code=\((error as NSError).code)") }
+            return
+        }
         if let error {
             note("ping failed code=\((error as NSError).code)")
         } else {
             lastPing = Date()
             note("ping ok")
         }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == BridgeUUID.settings else { return }
+        note("settings notify=\(characteristic.isNotifying) code=\((error as NSError?)?.code ?? 0)")
     }
 
     func peripheral(_ peripheral: CBPeripheral, didModifyServices invalidatedServices: [CBService]) {

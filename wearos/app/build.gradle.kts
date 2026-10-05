@@ -37,6 +37,7 @@ kotlin {
 
 dependencies {
     implementation(project(":ancs"))
+    implementation(project(":protocol"))
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.activity.compose)

@@ -109,11 +109,7 @@ private fun WatchApp(
                     onOpenSettings = { nav.navigate("settings") },
                 )
             }
-            composable("settings") { SettingsScreen(onOpenApps = { nav.navigate("apps") }) }
-            composable("apps") { AppsScreen(onOpenApp = { id -> nav.navigate("app/$id") }) }
-            composable("app/{bundleId}") { entry ->
-                AppSettingsScreen(entry.arguments?.getString("bundleId").orEmpty())
-            }
+            composable("settings") { SettingsScreen() }
             composable("notifications") {
                 NotificationListScreen(onOpen = { uid -> nav.navigate("notification/$uid") })
             }

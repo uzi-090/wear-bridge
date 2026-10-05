@@ -23,13 +23,14 @@ import java.util.UUID
 @SuppressLint("MissingPermission") // ConnectionManager checks permissions before creating sessions
 class GattSession(
     private val context: Context,
-    private val device: BluetoothDevice,
+    val device: BluetoothDevice,
     private val listener: Listener,
 ) {
     interface Listener {
         fun onCharacteristicChanged(session: GattSession, uuid: UUID, value: ByteArray)
         fun onDisconnected(session: GattSession, status: Int)
         fun onServiceChanged(session: GattSession)
+        fun onMtu(session: GattSession, mtu: Int)
     }
 
     data class Discovery(val ok: Boolean, val status: Int, val hasAncs: Boolean, val serviceCount: Int)
@@ -76,7 +77,10 @@ class GattSession(
             }
         }
 
-        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) = queue.complete(GattOpQueue.Kind.MTU, status)
+        override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (status == BluetoothGatt.GATT_SUCCESS) listener.onMtu(this@GattSession, mtu)
+            queue.complete(GattOpQueue.Kind.MTU, status)
+        }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) = queue.complete(GattOpQueue.Kind.DISCOVER, status)
 

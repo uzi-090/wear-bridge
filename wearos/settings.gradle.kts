@@ -17,4 +17,5 @@ dependencyResolutionManagement {
 rootProject.name = "WearBridge"
 
 include(":ancs")
+include(":protocol")
 include(":app")

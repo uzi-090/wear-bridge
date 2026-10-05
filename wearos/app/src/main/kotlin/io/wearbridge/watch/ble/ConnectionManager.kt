@@ -15,6 +15,7 @@ import io.wearbridge.ancs.AncsUuids
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.BridgePermissions
 import io.wearbridge.watch.ancs.AncsClient
+import io.wearbridge.watch.bridge.SettingsChannel
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
 import io.wearbridge.watch.notifications.ActionStatus
@@ -56,6 +57,7 @@ class ConnectionManager(
     private val peripheral = BridgePeripheral(context, PeripheralListener())
     private val pairing = PairingManager(scope, onBonded = { dispatch(LinkEvent.Bonded) }, onFailed = { dispatch(LinkEvent.BondFailed) })
     private val reconnection = ReconnectionManager(scope) { dispatch(LinkEvent.RetryTimer) }
+    private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, scope)
 
     private var device: BluetoothDevice? = null
     private var session: GattSession? = null
@@ -71,6 +73,8 @@ class ConnectionManager(
         data class Characteristic(val session: GattSession, val uuid: UUID, val value: ByteArray) : Msg
         data class BondState(val device: BluetoothDevice, val state: Int, val previous: Int) : Msg
         data class Action(val uid: Long, val action: ActionId) : Msg
+        data class SettingsChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
+        data class SettingsSubscription(val device: BluetoothDevice, val subscribed: Boolean) : Msg
         data object Shutdown : Msg
     }
 
@@ -123,10 +127,15 @@ class ConnectionManager(
                         DiagLog.i("ignoring second central ${Redact.device(msg.device)}")
                 }
             }
-            is Msg.CentralDisconnected -> if (msg.device.address == device?.address) {
-                device = null
-                dispatch(LinkEvent.CentralDisconnected)
+            is Msg.CentralDisconnected -> {
+                settingsChannel.onDisconnected(msg.device)
+                if (msg.device.address == device?.address) {
+                    device = null
+                    dispatch(LinkEvent.CentralDisconnected)
+                }
             }
+            is Msg.SettingsChunk -> settingsChannel.onChunk(msg.device, msg.value)
+            is Msg.SettingsSubscription -> settingsChannel.onSubscription(msg.device, msg.subscribed)
             is Msg.ClientDisconnected -> if (device != null && msg.session === session) {
                 DiagLog.i("gatt client dropped status=${msg.status}")
                 dispatch(LinkEvent.SetupFailed)
@@ -256,6 +265,10 @@ class ConnectionManager(
         override fun onCharacteristicChanged(session: GattSession, uuid: UUID, value: ByteArray) =
             post(Msg.Characteristic(session, uuid, value))
         override fun onDisconnected(session: GattSession, status: Int) = post(Msg.ClientDisconnected(session, status))
+        override fun onMtu(session: GattSession, mtu: Int) {
+            DiagLog.i("link mtu=$mtu")
+            peripheral.recordMtu(session.device, mtu)
+        }
         override fun onServiceChanged(session: GattSession) {
             DiagLog.i("iPhone GATT database changed")
             post(Msg.Link(LinkEvent.RetryTimer))
@@ -270,6 +283,9 @@ class ConnectionManager(
         override fun onControlWrite(device: BluetoothDevice, value: ByteArray) {
             DiagLog.i("bridge control write ${value.size} bytes from ${Redact.device(device)}")
         }
+        override fun onSettingsChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.SettingsChunk(device, value))
+        override fun onSettingsSubscription(device: BluetoothDevice, subscribed: Boolean) =
+            post(Msg.SettingsSubscription(device, subscribed))
     }
 
     private val systemReceiver = object : BroadcastReceiver() {

@@ -36,6 +36,8 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
         fun onCentralDisconnected(device: BluetoothDevice)
         fun onAdvertisingFailed(errorCode: Int, unsupported: Boolean)
         fun onControlWrite(device: BluetoothDevice, value: ByteArray)
+        fun onSettingsChunk(device: BluetoothDevice, value: ByteArray)
+        fun onSettingsSubscription(device: BluetoothDevice, subscribed: Boolean)
     }
 
     private val manager = context.getSystemService(BluetoothManager::class.java)
@@ -43,6 +45,50 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
     private var server: BluetoothGattServer? = null
 
     @Volatile private var serviceReady = false
+
+    /** ATT MTU per connected central (default 23 until the iPhone negotiates more). */
+    private val mtus = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val notifyQueue = ArrayDeque<Pair<BluetoothDevice, ByteArray>>()
+    private var notifyInFlight = false
+
+    /** The ATT MTU is per link, so the MTU our GATT client negotiated with the iPhone applies here too. */
+    fun recordMtu(device: BluetoothDevice, mtu: Int) {
+        mtus.merge(device.address, mtu, ::maxOf)
+    }
+
+    /** Largest notification payload for [device]: ATT_MTU − 3. */
+    fun maxPayload(device: BluetoothDevice): Int = (mtus[device.address] ?: 23) - 3
+
+    /**
+     * Queues SETTINGS notifications. Android allows one outstanding notification per server, so the
+     * next one is sent only after onNotificationSent.
+     */
+    fun notifySettings(device: BluetoothDevice, chunks: List<ByteArray>) {
+        synchronized(notifyQueue) {
+            chunks.forEach { notifyQueue.addLast(device to it) }
+            if (!notifyInFlight) sendNextNotification()
+        }
+    }
+
+    private fun sendNextNotification() {
+        val (device, value) = notifyQueue.removeFirstOrNull() ?: run { notifyInFlight = false; return }
+        val characteristic = server?.getService(BridgeUuids.SERVICE)?.getCharacteristic(BridgeUuids.SETTINGS)
+            ?: run { notifyQueue.clear(); notifyInFlight = false; return }
+        notifyInFlight = true
+        val started = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            server?.notifyCharacteristicChanged(device, characteristic, false, value) == android.bluetooth.BluetoothStatusCodes.SUCCESS
+        } else {
+            @Suppress("DEPRECATION")
+            characteristic.value = value
+            @Suppress("DEPRECATION")
+            server?.notifyCharacteristicChanged(device, characteristic, false) == true
+        }
+        if (!started) {
+            DiagLog.w("settings notify refused, dropping ${notifyQueue.size + 1} chunks")
+            notifyQueue.clear()
+            notifyInFlight = false
+        }
+    }
     @Volatile private var advertiseWanted = false
     @Volatile private var advertising = false
 
@@ -156,8 +202,42 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
             DiagLog.i("server link ${Redact.device(device)} state=$newState status=$status")
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> listener.onCentralConnected(device)
-                BluetoothProfile.STATE_DISCONNECTED -> listener.onCentralDisconnected(device)
+                BluetoothProfile.STATE_DISCONNECTED -> {
+                    mtus.remove(device.address)
+                    synchronized(notifyQueue) {
+                        notifyQueue.removeAll { it.first.address == device.address }
+                        if (notifyQueue.isEmpty()) notifyInFlight = false
+                    }
+                    listener.onCentralDisconnected(device)
+                }
             }
+        }
+
+        override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            mtus[device.address] = mtu
+            DiagLog.i("server mtu=$mtu ${Redact.device(device)}")
+        }
+
+        override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+            synchronized(notifyQueue) { sendNextNotification() }
+        }
+
+        override fun onDescriptorReadRequest(
+            device: BluetoothDevice, requestId: Int, offset: Int, descriptor: android.bluetooth.BluetoothGattDescriptor,
+        ) {
+            server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, byteArrayOf(0, 0))
+        }
+
+        override fun onDescriptorWriteRequest(
+            device: BluetoothDevice, requestId: Int, descriptor: android.bluetooth.BluetoothGattDescriptor,
+            preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
+        ) {
+            val ok = descriptor.uuid == BridgeUuids.CCCD && descriptor.characteristic.uuid == BridgeUuids.SETTINGS &&
+                value != null && value.size == 2
+            if (responseNeeded) {
+                server?.sendResponse(device, requestId, if (ok) BluetoothGatt.GATT_SUCCESS else BluetoothGatt.GATT_REQUEST_NOT_SUPPORTED, offset, null)
+            }
+            if (ok) listener.onSettingsSubscription(device, subscribed = value!![0].toInt() and 0x01 != 0)
         }
 
         override fun onCharacteristicReadRequest(
@@ -178,7 +258,8 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
             device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
-            val ok = characteristic.uuid == BridgeUuids.CONTROL && !preparedWrite && offset == 0 && value != null
+            val ok = (characteristic.uuid == BridgeUuids.CONTROL || characteristic.uuid == BridgeUuids.SETTINGS) &&
+                !preparedWrite && offset == 0 && value != null
             if (responseNeeded) {
                 server?.sendResponse(
                     device, requestId,
@@ -186,7 +267,11 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
                     offset, null,
                 )
             }
-            if (ok) listener.onControlWrite(device, value!!.copyOf())
+            if (!ok) return
+            when (characteristic.uuid) {
+                BridgeUuids.CONTROL -> listener.onControlWrite(device, value!!.copyOf())
+                BridgeUuids.SETTINGS -> listener.onSettingsChunk(device, value!!.copyOf())
+            }
         }
     }
 
@@ -206,10 +291,25 @@ class BridgePeripheral(private val context: Context, private val listener: Liste
                     BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED,
                 ),
             )
+            addCharacteristic(
+                BluetoothGattCharacteristic(
+                    BridgeUuids.SETTINGS,
+                    BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+                    BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED,
+                ).apply {
+                    addDescriptor(
+                        android.bluetooth.BluetoothGattDescriptor(
+                            BridgeUuids.CCCD,
+                            android.bluetooth.BluetoothGattDescriptor.PERMISSION_READ_ENCRYPTED or
+                                android.bluetooth.BluetoothGattDescriptor.PERMISSION_WRITE_ENCRYPTED,
+                        ),
+                    )
+                },
+            )
         }
 
     private fun pairingValue(): ByteArray {
-        val caps = BridgeUuids.CAP_ANCS_CLIENT
+        val caps = BridgeUuids.CAP_ANCS_CLIENT or BridgeUuids.CAP_SETTINGS
         return byteArrayOf(
             BridgeUuids.PROTOCOL_VERSION.toByte(),
             caps.toByte(), (caps ushr 8).toByte(), (caps ushr 16).toByte(), (caps ushr 24).toByte(),
