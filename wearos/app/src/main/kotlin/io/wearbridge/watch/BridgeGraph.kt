@@ -116,7 +116,7 @@ object BridgeGraph {
         settings = BridgeSettings(app)
         repository = NotificationRepository(historyEnabled = { settings.history.value })
         policy = PolicyStore(app)
-        icons = AppIconStore(app)
+        icons = AppIconStore(app).also { store -> Thread({ store.prewarm() }, "icon-prewarm").apply { priority = Thread.MIN_PRIORITY }.start() }
         notifier = MirrorNotifier(app, settings).also { it.createChannels() }
         findWatch = FindWatchAlert(app).also { it.createChannel() }
         identity = IdentityStore(app)
@@ -124,6 +124,34 @@ object BridgeGraph {
         calls = io.wearbridge.watch.calls.CallController(app).also { it.start() }
         io.wearbridge.watch.tile.TileRefresher.start(app)
         approvals = ApprovalNotifier(app).also { it.createChannel() }
+        trackForeground(app)
+    }
+
+    /** Tells the link when any Bridge screen (app, call, find) is showing, for [io.wearbridge.watch.ble.LinkPower]. */
+    @Volatile
+    internal var appForeground = false
+        private set
+
+    private fun trackForeground(app: Application) {
+        app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
+            private var started = 0
+            override fun onActivityStarted(activity: android.app.Activity) {
+                if (started++ == 0) setForeground(true)
+            }
+            override fun onActivityStopped(activity: android.app.Activity) {
+                if (--started == 0) setForeground(false)
+            }
+            override fun onActivityCreated(activity: android.app.Activity, state: android.os.Bundle?) = Unit
+            override fun onActivityResumed(activity: android.app.Activity) = Unit
+            override fun onActivityPaused(activity: android.app.Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: android.app.Activity, state: android.os.Bundle) = Unit
+            override fun onActivityDestroyed(activity: android.app.Activity) = Unit
+        })
+    }
+
+    private fun setForeground(on: Boolean) {
+        appForeground = on
+        controller?.setForeground(on)
     }
 
     fun performAction(uid: Long, action: ActionId) {

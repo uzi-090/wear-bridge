@@ -67,6 +67,10 @@ class GattSession(
     fun phoneServices(listener: PhoneServicesClient.Listener): PhoneServicesClient? =
         gatt?.let { PhoneServicesClient(it, queue, listener) }
 
+    /** Asks for a connection interval (see [LinkPower]). Not a GATT operation, so it isn't queued. */
+    fun requestPriority(priority: Int): Boolean =
+        runCatching { gatt?.requestConnectionPriority(priority) == true }.getOrDefault(false)
+
     fun close() {
         queue.failAll()
         gatt?.close()

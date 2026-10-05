@@ -72,6 +72,17 @@ class ConnectionManager(
     private val peripheral = BridgePeripheral(context, PeripheralListener(), BridgeGraph.identity.publicKey)
     private val pairing = PairingManager(scope, onBonded = { dispatch(LinkEvent.Bonded) }, onFailed = { dispatch(LinkEvent.BondFailed) })
     private val reconnection = ReconnectionManager(scope) { dispatch(LinkEvent.RetryTimer) }
+    private val power = LinkPower(
+        request = { priority -> session?.requestPriority(priority) == true },
+        timer = { delayMs, action ->
+            val job = scope.launch {
+                kotlinx.coroutines.delay(delayMs)
+                action()
+            }
+            ({ job.cancel() })
+        },
+        log = DiagLog::i,
+    )
     private val secureLink: SecureLink = SecureLink(peripheral, BridgeGraph.identity, BridgeGraph.approvals) { device ->
         settingsChannel.onAuthenticated(device)
         deviceChannel.onAuthenticated(device)
@@ -107,6 +118,7 @@ class ConnectionManager(
         data class CallRequest(val phone: String, val name: String) : Msg
         data class Approve(val allow: Boolean) : Msg
         data class Media(val command: RemoteCommand) : Msg
+        data class Foreground(val on: Boolean) : Msg
         data object Shutdown : Msg
     }
 
@@ -155,6 +167,9 @@ class ConnectionManager(
 
     fun callFromIphone(phone: String, name: String) = post(Msg.CallRequest(phone, name))
 
+    /** A Bridge screen is showing (or not): keeps the link responsive while the user is looking. */
+    fun setForeground(on: Boolean) = post(Msg.Foreground(on))
+
     private fun post(msg: Msg) {
         inbox.trySend(msg)
     }
@@ -162,7 +177,10 @@ class ConnectionManager(
     // ---- message handling (BLE dispatcher only) ----
 
     private fun handle(msg: Msg) {
+        // Traffic either way (and user commands) keeps the link quick; quiet lets it drop to low power.
+        if (msg !is Msg.Link && msg !is Msg.BondState && msg !is Msg.Foreground && msg !is Msg.Shutdown) power.activity()
         when (msg) {
+            is Msg.Foreground -> power.setForeground(msg.on)
             is Msg.Link -> dispatch(msg.event)
             is Msg.CentralConnected -> {
                 val waiting = sm.snapshot.state in setOf(LinkState.ADVERTISING, LinkState.RECONNECTING, LinkState.ERROR)
@@ -256,6 +274,8 @@ class ConnectionManager(
         if (before != after) {
             DiagLog.i("link ${before.state} → ${after.state}${after.issue?.let { " ($it)" } ?: ""} on ${event::class.simpleName}")
             BridgeGraph.linkFlow.value = after
+            if (after.state == LinkState.READY && before.state != LinkState.READY) power.onReady()
+            if (before.state == LinkState.READY && after.state != LinkState.READY) power.onDown()
         }
         effects.forEach(::execute)
     }
@@ -308,6 +328,7 @@ class ConnectionManager(
     }
 
     private fun closeClient() {
+        power.onDown()
         setupJob?.cancel()
         pairing.cancel()
         ancs = null

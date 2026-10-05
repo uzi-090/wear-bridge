@@ -53,6 +53,7 @@ class BridgeService : Service() {
         }.also {
             BridgeGraph.controller = it
             it.start()
+            it.setForeground(BridgeGraph.appForeground)
         }
         scope.launch {
             BridgeGraph.link.map { it.state }.distinctUntilChanged().collect { state ->

@@ -9,6 +9,15 @@
   The only timers are bounded retry backoff (≤ 8 attempts, capped at 60 s) and per-request ANCS timeouts.
 - Attribute fetches are lazy and serial. Message bodies are capped at 512 bytes and the MTU is 185.
 - On reconnect, the replay goes to the in-app inbox without haptics.
+- **Adaptive connection interval** (`LinkPower`). iOS keeps a ~45 ms interval with no peripheral latency
+  unless asked. After 8 s with no traffic and no Bridge screen showing, the watch requests
+  `CONNECTION_PRIORITY_LOW_POWER`; any traffic or an open screen switches back to `BALANCED`.
+  Measured on the rig (2026-10-06): iOS granted **interval 120 ms, latency 2, timeout 5 s**, so the
+  idle radio listens about every 360 ms instead of every 45 ms (≈ 8× fewer wake-ups).
+- During a connected call with shake-to-end on, accelerometer samples are batched by the sensor hub
+  (≤ 400 ms) instead of waking the CPU 50 times a second. While ringing they stay real-time.
+- The UI never animates in the background: no endless animations, and the Home status pulse plays
+  once per connection.
 
 ## Method
 **Wireless ADB keeps Wi-Fi awake and skews results.** Turn off *Wireless debugging* (or the watch's

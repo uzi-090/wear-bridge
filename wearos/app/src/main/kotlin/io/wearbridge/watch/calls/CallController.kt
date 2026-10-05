@@ -74,6 +74,7 @@ class CallController(private val context: Context) {
     private var pendingOutcome: CallUi.Outcome? = null
     private var endedJob: Job? = null
     private var listening = false
+    private var listeningLatencyUs: Int? = null
 
     fun start() {
         scope.launch {
@@ -203,16 +204,23 @@ class CallController(private val context: Context) {
     }
 
     private fun updateSensor() {
-        val want = shakeCanAct()
-        if (want == listening) return
-        val accel = sensors?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-        if (want && accel != null) {
-            shake.reset(SystemClock.elapsedRealtime())
-            listening = sensors.registerListener(sensorListener, accel, SensorManager.SENSOR_DELAY_GAME)
-            DiagLog.i("call: shake detection on=$listening")
-        } else if (!want && listening) {
+        // Ringing: samples in real time, so a shake declines at once. Connected (calls can run long):
+        // the sensor hub batches samples, so the CPU isn't woken 50 times a second. Detection uses
+        // the samples' own timestamps, so batching doesn't change what counts as a shake.
+        val want: Int? = if (!shakeCanAct()) null else if (_ui.value is CallUi.Ringing) 0 else ACTIVE_BATCH_US
+        if (want == listeningLatencyUs) return
+        if (listening) {
             sensors?.unregisterListener(sensorListener)
             listening = false
+        }
+        listeningLatencyUs = null
+        val accel = sensors?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+        if (want != null && accel != null) {
+            shake.reset(SystemClock.elapsedRealtime())
+            listening = sensors.registerListener(sensorListener, accel, SensorManager.SENSOR_DELAY_GAME, want)
+            if (listening) listeningLatencyUs = want
+            DiagLog.i("call: shake detection on=$listening batch=${want / 1000}ms")
+        } else {
             DiagLog.i("call: shake detection off")
         }
     }
@@ -286,5 +294,8 @@ class CallController(private val context: Context) {
         const val SUMMARY_MS = 2_200L
         /** iOS posts the connected call within ~100 ms of removing the ringing one (measured); 4 s is generous. */
         const val ANSWER_TIMEOUT_MS = 4_000L
+
+        /** How long the sensor hub may hold accelerometer samples during a connected call. */
+        const val ACTIVE_BATCH_US = 400_000
     }
 }
