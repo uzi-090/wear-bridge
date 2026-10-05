@@ -15,7 +15,10 @@
   ZEE5, EazyDiner, Lenskart, GeoGuessr, Slack, LinkedIn, Microsoft Teams/Outlook, FaceTime.
 
 ## Media glyphs and sounds
-- `ic_play`, `ic_pause`, `ic_skip_next`, `ic_skip_previous`, `ic_volume_up`, `ic_volume_down`, `ic_music_note`:
+- `ic_play`, `ic_pause`, `ic_skip_next`, `ic_skip_previous`, `ic_volume_up`, `ic_volume_down`, `ic_music_note`, and the
+  UI icon set (`ic_notifications`, `ic_person`, `ic_settings`, `ic_phone_iphone`, `ic_delete`, `ic_clear_all`, `ic_search`,
+  `ic_info`, `ic_star`, `ic_vibration`, `ic_history`, `ic_lock`, `ic_bluetooth`, `ic_battery`, `ic_check`, `ic_science`,
+  `ic_rotate`, `ic_call`, `ic_call_end`, `ic_silence`):
   Material Icons path data (Apache License 2.0), written as vector XML. Nothing downloaded.
 - `ios/PairingPOC/Resources/FindPhone.caf`: an original chime synthesized for this project (three sine
   tones, 29.5 s, IMA4). No third-party audio.

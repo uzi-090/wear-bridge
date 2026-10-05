@@ -1,10 +1,13 @@
 package io.wearbridge.watch.ui
 
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -14,45 +17,55 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.AlertDialog
 import androidx.wear.compose.material3.AlertDialogDefaults
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.CardDefaults
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.FilledTonalButton
-import androidx.wear.compose.material3.ListHeader
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.LocalTextStyle
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.OutlinedButton
-import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SwipeToReveal
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.TitleCard
 import io.wearbridge.ancs.ActionId
 import io.wearbridge.ancs.Category
 import io.wearbridge.watch.BridgeGraph
+import io.wearbridge.watch.R
 import io.wearbridge.watch.notifications.ActionStatus
 import io.wearbridge.watch.notifications.NotificationRepository
 import io.wearbridge.watch.notifications.NotificationThread
 import io.wearbridge.watch.notifications.WatchNotification
+import io.wearbridge.watch.ui.theme.BridgeList
+import io.wearbridge.watch.ui.theme.BridgePalette
+import io.wearbridge.watch.ui.theme.Note
+import io.wearbridge.watch.ui.theme.SectionHeader
+import io.wearbridge.watch.ui.theme.morph
+import io.wearbridge.watch.ui.theme.surface
 import kotlinx.coroutines.flow.map
 
-/** The inbox: one card per conversation (app + sender/chat), grouped into Today and Earlier. */
+/**
+ * The inbox: one card per conversation (app + sender/chat), Today then Earlier. Swipe a card left to
+ * delete it from the watch (the iPhone keeps it); Clear all sits on the bottom edge.
+ */
 @Composable
 fun NotificationListScreen(onOpen: (Long) -> Unit, onOpenThread: (Long) -> Unit) {
     val items by BridgeGraph.repository.items.collectAsStateWithLifecycle()
-    val listState = rememberTransformingLazyColumnState()
     val threads = remember(items) { NotificationRepository.threads(items) }
     val (today, earlier) = threads.partition { Copy.isToday(it.latest.timeMillis) }
     val deletable = items.any { !it.isIncomingCall && !it.isActiveCall }
@@ -60,30 +73,44 @@ fun NotificationListScreen(onOpen: (Long) -> Unit, onOpenThread: (Long) -> Unit)
     val haptics = LocalHapticFeedback.current
     val open: (NotificationThread) -> Unit = { t -> if (t.count > 1) onOpenThread(t.latest.uid) else onOpen(t.latest.uid) }
 
-    ScreenScaffold(
-        scrollState = listState,
-        edgeButton = {
-            if (deletable) {
-                EdgeButton(onClick = { confirmClear = true }, buttonSize = EdgeButtonSize.Small) { Text(Copy.CLEAR_ALL) }
+    BridgeList(
+        edgeButton = if (deletable) {
+            {
+                EdgeButton(
+                    onClick = { confirmClear = true },
+                    buttonSize = EdgeButtonSize.Small,
+                    colors = ButtonDefaults.filledTonalButtonColors(),
+                ) {
+                    Icon(painterResource(R.drawable.ic_clear_all), contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(Copy.CLEAR_ALL)
+                }
             }
-        },
-    ) { padding ->
-        TransformingLazyColumn(state = listState, contentPadding = padding) {
-            item { ListHeader { Text("Notifications") } }
-            if (items.isEmpty()) {
-                item { Caption("No notifications") }
-                item { Caption("iPhone notifications appear here while you're connected.") }
+        } else null,
+    ) { spec ->
+        item { SectionHeader("Notifications", spec) }
+        if (items.isEmpty()) {
+            item {
+                Icon(
+                    painterResource(R.drawable.ic_notifications),
+                    contentDescription = null,
+                    tint = BridgePalette.TextTertiary,
+                    modifier = morph(spec).size(32.dp),
+                )
             }
-            if (today.isNotEmpty() && earlier.isNotEmpty()) item { ListHeader { Text("Today") } }
-            items(today, key = { it.latest.uid }) { ThreadCard(it, open) }
-            if (earlier.isNotEmpty()) item { ListHeader { Text("Earlier") } }
-            items(earlier, key = { it.latest.uid }) { ThreadCard(it, open) }
+            item { Note(spec, "You're all caught up", MaterialTheme.colorScheme.onSurface) }
+            item { Note(spec, "iPhone notifications appear here while you're connected.") }
         }
+        if (today.isNotEmpty() && earlier.isNotEmpty()) item { SectionHeader("Today", spec) }
+        items(today, key = { it.latest.uid }) { ThreadCard(it, open, Modifier.then(morph(spec)), surface(spec)) }
+        if (earlier.isNotEmpty()) item { SectionHeader("Earlier", spec) }
+        items(earlier, key = { it.latest.uid }) { ThreadCard(it, open, Modifier.then(morph(spec)), surface(spec)) }
     }
 
     AlertDialog(
         visible = confirmClear,
         onDismissRequest = { confirmClear = false },
+        icon = { Icon(painterResource(R.drawable.ic_clear_all), contentDescription = null) },
         title = { Text("Clear watch?") },
         text = { Text(Copy.CLEAR_ALL_DETAIL, textAlign = TextAlign.Center) },
         confirmButton = {
@@ -98,49 +125,69 @@ fun NotificationListScreen(onOpen: (Long) -> Unit, onOpenThread: (Long) -> Unit)
 }
 
 @Composable
-private fun ThreadCard(thread: NotificationThread, onOpen: (NotificationThread) -> Unit) {
+private fun ThreadCard(
+    thread: NotificationThread,
+    onOpen: (NotificationThread) -> Unit,
+    modifier: Modifier,
+    transformation: androidx.wear.compose.material3.SurfaceTransformation,
+) {
     val n = thread.latest
-    TitleCard(
-        onClick = { onOpen(thread) },
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AppBadge(n.app, size = 18.dp)
-                Spacer(Modifier.width(6.dp))
-                Text(n.appLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    val haptics = LocalHapticFeedback.current
+    val deletable = !n.isIncomingCall && !n.isActiveCall
+    val card = @Composable {
+        TitleCard(
+            onClick = { onOpen(thread) },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppBadge(n.app, size = 18.dp)
+                    Spacer(Modifier.width(6.dp))
+                    Text(n.appLabel, maxLines = 1, overflow = TextOverflow.Ellipsis, color = BridgePalette.TextSecondary, style = MaterialTheme.typography.labelMedium)
+                }
+            },
+            time = { Text(Copy.relative(n.timeMillis), color = BridgePalette.TextTertiary) },
+            shape = RoundedCornerShape(26.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            transformation = transformation,
+            // Cleared-on-iPhone history is dimmed; "Cleared" is also said in words, so it isn't colour-only.
+            modifier = Modifier.fillMaxWidth().alpha(if (thread.items.all { it.clearedOnPhone }) 0.62f else 1f),
+        ) {
+            // Sender (or chat) first, then the message: the order people read a conversation in.
+            if (!n.masked && n.ancs.title.isNotBlank()) {
+                ContentText(n.ancs.title, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onSurface, maxLines = 1)
             }
-        },
-        time = { Text(Copy.relative(n.timeMillis)) },
-        // Cleared-on-iPhone history is dimmed. "Cleared" is also said in words below, so it isn't colour-only.
-        modifier = Modifier.fillMaxWidth().alpha(if (thread.items.all { it.clearedOnPhone }) 0.62f else 1f),
-    ) {
-        // Sender (or chat) first, then the message: the order people read a conversation in.
-        if (!n.masked && n.ancs.title.isNotBlank()) {
-            ContentText(
-                n.ancs.title,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-        }
-        when {
-            n.masked -> Text(Copy.MASKED, maxLines = 1)
-            n.ancs.message.isNotBlank() -> ContentText(n.ancs.message, maxLines = 2)
-        }
-        val more = thread.count - 1
-        val footer = listOfNotNull(
-            if (more > 0) Copy.moreMessages(more) else null,
-            if (n.clearedOnPhone) Copy.CLEARED_SHORT else null,
-        )
-        if (footer.isNotEmpty()) {
-            Text(
-                footer.joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-                modifier = Modifier.padding(top = 2.dp),
-            )
+            when {
+                n.masked -> Text(Copy.MASKED, maxLines = 1, color = BridgePalette.TextSecondary)
+                n.ancs.message.isNotBlank() -> ContentText(n.ancs.message, color = BridgePalette.TextSecondary, maxLines = 2)
+            }
+            val more = thread.count - 1
+            val footer = listOfNotNull(if (more > 0) Copy.moreMessages(more) else null, if (n.clearedOnPhone) Copy.CLEARED_SHORT else null)
+            if (footer.isNotEmpty()) {
+                Text(footer.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1, modifier = Modifier.padding(top = 2.dp))
+            }
         }
     }
+    if (!deletable) {
+        Column(modifier) { card() }
+        return
+    }
+    SwipeToReveal(
+        primaryAction = {
+            PrimaryActionButton(
+                onClick = { delete(thread, haptics) },
+                icon = { Icon(painterResource(R.drawable.ic_delete), contentDescription = "Delete from watch") },
+                text = { Text("Delete") },
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+            )
+        },
+        onSwipePrimaryAction = { delete(thread, haptics) },
+        modifier = modifier,
+    ) { card() }
+}
+
+private fun delete(thread: NotificationThread, haptics: androidx.compose.ui.hapticfeedback.HapticFeedback) {
+    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+    thread.items.forEach { BridgeGraph.delete(it.uid) }
 }
 
 /** Every notification in one conversation, newest first. [anchorUid] is any notification in it. */
@@ -152,43 +199,45 @@ fun ThreadScreen(anchorUid: Long, onOpen: (Long) -> Unit) {
     // a message detail is on top of it (destinations in the back stack lose plain remember state).
     val key = rememberSaveable(anchorUid) { repo.get(anchorUid)?.threadKey.orEmpty() }
     val thread = remember(items, key) { items.filter { it.threadKey == key }.sortedByDescending { it.timeMillis } }
-    val listState = rememberTransformingLazyColumnState()
 
-    ScreenScaffold(scrollState = listState) { padding ->
-        TransformingLazyColumn(state = listState, contentPadding = padding) {
-            val first = thread.firstOrNull()
-            if (first == null) {
-                item { ListHeader { Text(Copy.CLEARED, textAlign = TextAlign.Center) } }
-                return@TransformingLazyColumn
+    BridgeList { spec ->
+        val first = thread.firstOrNull()
+        if (first == null) {
+            item { Note(spec, Copy.CLEARED, MaterialTheme.colorScheme.onSurface) }
+            return@BridgeList
+        }
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = morph(spec)) {
+                AppBadge(first.app, size = 24.dp)
+                Text(
+                    if (first.masked) first.appLabel else first.ancs.title.ifBlank { first.appLabel },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 4.dp, start = 24.dp, end = 24.dp),
+                )
+                Text("${thread.size} messages", style = MaterialTheme.typography.labelSmall, color = BridgePalette.TextSecondary)
             }
-            item {
-                ListHeader {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AppBadge(first.app, size = 20.dp)
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            if (first.masked) first.appLabel else first.ancs.title.ifBlank { first.appLabel },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-            items(thread, key = { it.uid }) { n ->
-                TitleCard(
-                    onClick = { onOpen(n.uid) },
-                    title = { Text(Copy.relative(n.timeMillis)) },
-                    modifier = Modifier.fillMaxWidth().alpha(if (n.clearedOnPhone) 0.62f else 1f),
-                ) {
-                    ContentText(
-                        when {
-                            n.masked -> Copy.MASKED
-                            n.ancs.message.isNotBlank() -> n.ancs.message
-                            else -> n.ancs.subtitle
-                        },
-                        maxLines = 3,
-                    )
-                }
+        }
+        items(thread, key = { it.uid }) { n ->
+            Card(
+                onClick = { onOpen(n.uid) },
+                modifier = morph(spec).alpha(if (n.clearedOnPhone) 0.62f else 1f),
+                transformation = surface(spec),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            ) {
+                // The message is the headline; when it arrived is secondary.
+                ContentText(
+                    when {
+                        n.masked -> Copy.MASKED
+                        n.ancs.message.isNotBlank() -> n.ancs.message
+                        else -> n.ancs.subtitle
+                    },
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 4,
+                )
+                Text(Copy.relative(n.timeMillis), style = MaterialTheme.typography.labelSmall, color = BridgePalette.TextTertiary, modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -201,93 +250,105 @@ fun NotificationDetailScreen(uid: Long, onDeleted: () -> Unit) {
     val n by flow.collectAsStateWithLifecycle(initialValue = repo.get(uid))
     val status by repo.actionStatus.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
-    val listState = rememberTransformingLazyColumnState()
     var revealed by remember(uid) { mutableStateOf(false) }
     var deletedHere by remember(uid) { mutableStateOf(false) }
 
-    ScreenScaffold(scrollState = listState) { padding ->
-        TransformingLazyColumn(state = listState, contentPadding = padding) {
-            val current = n
-            if (current == null) {
-                if (deletedHere) return@TransformingLazyColumn // leaving: don't flash "cleared on iPhone"
-                // A header, not a caption: the first row on a round screen needs the header's edge-safe insets.
-                item { ListHeader { Text(Copy.CLEARED, textAlign = TextAlign.Center) } }
-                return@TransformingLazyColumn
+    BridgeList { spec ->
+        val current = n
+        if (current == null) {
+            if (!deletedHere) item { Note(spec, Copy.CLEARED, MaterialTheme.colorScheme.onSurface) } // leaving after a delete: show nothing
+            return@BridgeList
+        }
+        val a = current.ancs
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = morph(spec)) {
+                AppBadge(current.app, size = 24.dp)
+                Text(
+                    "${current.appLabel} · ${Copy.relative(current.timeMillis)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = BridgePalette.TextSecondary,
+                    maxLines = 1,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
             }
-            val a = current.ancs
+        }
+        if (current.masked && !revealed) {
+            item { Note(spec, Copy.MASKED_DETAIL) }
             item {
-                ListHeader {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        AppBadge(current.app, size = 22.dp)
-                        Spacer(Modifier.width(6.dp))
-                        Text("${current.appLabel} · ${Copy.relative(current.timeMillis)}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                }
+                FilledTonalButton(
+                    onClick = { revealed = true },
+                    modifier = morph(spec),
+                    transformation = surface(spec),
+                    icon = { Icon(painterResource(R.drawable.ic_lock), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize)) },
+                    label = { Text("Show content") },
+                )
             }
-            if (current.masked && !revealed) {
-                item { Caption(Copy.MASKED_DETAIL) }
-                item {
-                    FilledTonalButton(onClick = { revealed = true }, modifier = Modifier.fillMaxWidth(), label = { Text("Show content") })
-                }
-            } else {
-                if (a.title.isNotBlank()) item { ContentText(a.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.fillMaxWidth()) }
-                if (a.subtitle.isNotBlank()) item { ContentText(a.subtitle, style = MaterialTheme.typography.labelMedium, modifier = Modifier.fillMaxWidth()) }
-                if (a.message.isNotBlank()) item { ContentText(a.message, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth()) }
-                if (a.isMessageTruncated) item { Caption(Copy.TRUNCATED) }
-            }
+        } else {
+            if (a.title.isNotBlank()) item { ContentText(a.title, modifier = morph(spec), style = MaterialTheme.typography.titleMedium) }
+            if (a.subtitle.isNotBlank()) item { ContentText(a.subtitle, modifier = morph(spec), style = MaterialTheme.typography.labelMedium, color = BridgePalette.TextSecondary) }
+            if (a.message.isNotBlank()) item { ContentText(a.message, modifier = morph(spec), style = MaterialTheme.typography.bodyLarge) }
+            if (a.isMessageTruncated) item { Note(spec, Copy.TRUNCATED) }
+        }
 
-            when {
-                current.clearedOnPhone -> item { Caption(Copy.CLEARED_HISTORY) }
-                current.stale -> item { Caption(Copy.STALE) }
-                else -> {
-                    // Labels come straight from iOS. The order is negative then positive, as iOS presents them.
-                    a.negativeActionLabel?.let { label ->
-                        item {
-                            FilledTonalButton(
-                                onClick = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                                    BridgeGraph.performAction(uid, ActionId.NEGATIVE)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text(label) },
-                            )
-                        }
+        when {
+            current.clearedOnPhone -> item { Note(spec, Copy.CLEARED_HISTORY) }
+            current.stale -> item { Note(spec, Copy.STALE, BridgePalette.Attention) }
+            else -> {
+                // Labels come straight from iOS: positive is the screen's primary action, negative is tonal.
+                a.positiveActionLabel?.let { label ->
+                    item {
+                        Button(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                                BridgeGraph.performAction(uid, ActionId.POSITIVE)
+                            },
+                            modifier = morph(spec),
+                            transformation = surface(spec),
+                            icon = { Icon(painterResource(R.drawable.ic_check), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize)) },
+                            label = { Text(label) },
+                        )
                     }
-                    a.positiveActionLabel?.let { label ->
-                        item {
-                            Button(
-                                onClick = {
-                                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                                    BridgeGraph.performAction(uid, ActionId.POSITIVE)
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text(label) },
-                            )
-                        }
+                }
+                a.negativeActionLabel?.let { label ->
+                    item {
+                        FilledTonalButton(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                                BridgeGraph.performAction(uid, ActionId.NEGATIVE)
+                            },
+                            modifier = morph(spec),
+                            transformation = surface(spec),
+                            icon = { Icon(painterResource(R.drawable.ic_clear_all), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize)) },
+                            label = { Text(label) },
+                            secondaryLabel = { Text("On iPhone too") },
+                        )
                     }
-                    status?.takeIf { it.uid == uid }?.let { item { Caption(actionStatusText(it)) } }
-                    if (!current.hasActions) item { Caption(Copy.NO_ACTIONS) }
                 }
+                status?.takeIf { it.uid == uid }?.let { item { Note(spec, actionStatusText(it), MaterialTheme.colorScheme.primary) } }
+                if (!current.hasActions) item { Note(spec, Copy.NO_ACTIONS) }
             }
-            if (!current.clearedOnPhone && (a.category == Category.SOCIAL || a.category == Category.EMAIL)) {
-                item { Caption(Copy.REPLY_UNAVAILABLE) }
-            }
-            if (!current.isIncomingCall && !current.isActiveCall) {
-                item {
-                    OutlinedButton(
-                        onClick = {
-                            haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                            deletedHere = true
-                            BridgeGraph.delete(uid)
-                            onDeleted()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text(Copy.DELETE) },
-                        secondaryLabel = if (current.clearedOnPhone) null else {
-                            { Text(Copy.DELETE_DETAIL) }
-                        },
-                    )
-                }
+        }
+        if (!current.clearedOnPhone && (a.category == Category.SOCIAL || a.category == Category.EMAIL)) {
+            item { Note(spec, Copy.REPLY_UNAVAILABLE, BridgePalette.TextTertiary) }
+        }
+        if (!current.isIncomingCall && !current.isActiveCall) {
+            item {
+                FilledTonalButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                        deletedHere = true
+                        BridgeGraph.delete(uid)
+                        onDeleted()
+                    },
+                    modifier = morph(spec),
+                    transformation = surface(spec),
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    icon = { Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = BridgePalette.Destructive, modifier = Modifier.size(ButtonDefaults.IconSize)) },
+                    label = { Text(Copy.DELETE) },
+                    secondaryLabel = if (current.clearedOnPhone) null else {
+                        { Text(Copy.DELETE_DETAIL) }
+                    },
+                )
             }
         }
     }
@@ -333,3 +394,4 @@ fun Caption(text: String) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
     )
 }
+

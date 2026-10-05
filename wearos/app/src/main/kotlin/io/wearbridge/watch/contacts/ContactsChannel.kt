@@ -36,6 +36,9 @@ class ContactsChannel(private val secure: SecureLink, private val store: Contact
     }
 
     private fun handle(type: Int, payload: ByteArray) {
+        // Debug demo mode shows fake contacts for screenshots: real syncs must not replace them meanwhile
+        // (found: a resync put real names on screen). The iPhone resyncs after the app restarts.
+        if (io.wearbridge.watch.BridgeGraph.demoMode) return
         try {
             when (type) {
                 ContactsMessageType.BEGIN -> {

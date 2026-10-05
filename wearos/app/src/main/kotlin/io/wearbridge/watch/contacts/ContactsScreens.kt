@@ -5,12 +5,15 @@ import android.content.ActivityNotFoundException
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -20,40 +23,57 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.FilledTonalButton
-import androidx.wear.compose.material3.ListHeader
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.Text
 import io.wearbridge.protocol.Contact
 import io.wearbridge.watch.BridgeGraph
-import io.wearbridge.watch.ui.Caption
-import io.wearbridge.watch.ui.ContentText
+import io.wearbridge.watch.R
+import io.wearbridge.watch.ui.theme.BridgeList
+import io.wearbridge.watch.ui.theme.BridgePalette
+import io.wearbridge.watch.ui.theme.NavButton
+import io.wearbridge.watch.ui.theme.Note
+import io.wearbridge.watch.ui.theme.PastelAvatar
+import io.wearbridge.watch.ui.theme.SectionHeader
+import io.wearbridge.watch.ui.theme.morph
+import io.wearbridge.watch.ui.theme.surface
 
-/** Contacts synced from the iPhone: search, favorites, then everyone A–Z. */
+/** Contacts synced from the iPhone: favourites as a grid of faces, then search, then everyone A–Z. */
 @Composable
 fun ContactsScreen(onOpen: (String) -> Unit) {
     val all by BridgeGraph.contacts.contacts.collectAsStateWithLifecycle()
     var query by rememberSaveable { mutableStateOf("") }
     var searchUnavailable by remember { mutableStateOf(false) }
-    val listState = rememberTransformingLazyColumnState()
 
     // The system's Wear keyboard / voice input, through the standard RemoteInput activity.
     val search = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val text = result.data?.let { RemoteInput.getResultsFromIntent(it) }?.getCharSequence(SEARCH_KEY)?.toString()
         if (text != null) query = text.trim()
+    }
+    val startSearch = {
+        val intent = Intent(ACTION_REMOTE_INPUT)
+            .putExtra(EXTRA_REMOTE_INPUTS, arrayOf(RemoteInput.Builder(SEARCH_KEY).setLabel("Search contacts").build()))
+        try {
+            search.launch(intent)
+        } catch (_: ActivityNotFoundException) {
+            searchUnavailable = true
+        }
     }
 
     val filtered = remember(all, query) {
@@ -61,65 +81,77 @@ fun ContactsScreen(onOpen: (String) -> Unit) {
             c.name.contains(query, ignoreCase = true) || c.phones.any { it.contains(query.filter(Char::isDigit).ifEmpty { "\u0000" }) }
         }
     }
-    val favorites = remember(filtered, query) { if (query.isBlank()) filtered.filter { it.favorite } else emptyList() }
+    val favorites = remember(all) { all.filter { it.favorite }.take(6) }
 
-    ScreenScaffold(scrollState = listState) { padding ->
-        TransformingLazyColumn(state = listState, contentPadding = padding) {
-            item { ListHeader { Text("Contacts") } }
-            if (all.isEmpty()) {
-                item { Caption("No contacts on your watch") }
-                item { Caption("Turn on Contacts in the Bridge app on your iPhone.") }
-                return@TransformingLazyColumn
-            }
-            item {
-                FilledTonalButton(
-                    onClick = {
-                        val intent = Intent(ACTION_REMOTE_INPUT)
-                            .putExtra(EXTRA_REMOTE_INPUTS, arrayOf(RemoteInput.Builder(SEARCH_KEY).setLabel("Search contacts").build()))
-                        try {
-                            search.launch(intent)
-                        } catch (_: ActivityNotFoundException) {
-                            searchUnavailable = true
+    BridgeList { spec ->
+        item { SectionHeader("Contacts", spec) }
+        if (all.isEmpty()) {
+            item { Icon(painterResource(R.drawable.ic_person), contentDescription = null, tint = BridgePalette.TextTertiary, modifier = morph(spec).size(32.dp)) }
+            item { Note(spec, "No contacts on your watch", MaterialTheme.colorScheme.onSurface) }
+            item { Note(spec, "Add people in the Bridge app on your iPhone: Contacts › Contacts on Watch.") }
+            return@BridgeList
+        }
+        // Favourites as faces, three across, like the Wear OS contacts tile.
+        if (query.isBlank() && favorites.isNotEmpty()) {
+            favorites.chunked(3).forEach { row ->
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally), modifier = morph(spec)) {
+                        row.forEachIndexed { i, c ->
+                            PastelAvatar(
+                                c.name,
+                                size = 50.dp,
+                                square = i % 2 == 1, // alternate circle / rounded square, as in the tile
+                                modifier = Modifier
+                                    .clip(if (i % 2 == 1) RoundedCornerShape(16.dp) else CircleShape)
+                                    .clickable(role = Role.Button) { onOpen(c.id) }
+                                    .semantics { contentDescription = c.name },
+                            )
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(if (query.isBlank()) "Search" else "“$query”", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    secondaryLabel = if (query.isBlank()) null else {
-                        { Text("${filtered.size} found") }
-                    },
-                )
-            }
-            if (query.isNotBlank()) {
-                item { Button(onClick = { query = "" }, modifier = Modifier.fillMaxWidth(), label = { Text("Show all") }) }
-            }
-            if (searchUnavailable) item { Caption("This watch has no keyboard for search.") }
-            if (favorites.isNotEmpty()) {
-                item { ListHeader { Text("Favorites") } }
-                items(favorites, key = { "fav:" + it.id }) { ContactRow(it, onOpen) }
-                item { ListHeader { Text("All") } }
-            }
-            var lastLetter: Char? = null
-            filtered.forEach { c ->
-                val letter = c.name.firstOrNull()?.uppercaseChar()?.takeIf(Char::isLetter) ?: '#'
-                if (query.isBlank() && letter != lastLetter) {
-                    lastLetter = letter
-                    item(key = "h:$letter") { ListHeader { Text(letter.toString()) } }
+                    }
                 }
-                item(key = c.id) { ContactRow(c, onOpen) }
+            }
+        }
+        item {
+            FilledTonalButton(
+                onClick = startSearch,
+                modifier = morph(spec),
+                transformation = surface(spec),
+                icon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize)) },
+                label = { Text(if (query.isBlank()) "Search" else "“$query”", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                secondaryLabel = if (query.isBlank()) null else {
+                    { Text("${filtered.size} found") }
+                },
+            )
+        }
+        if (query.isNotBlank()) item { NavButton(spec, R.drawable.ic_person, "Show everyone") { query = "" } }
+        if (searchUnavailable) item { Note(spec, "This watch has no keyboard for search.") }
+        var lastLetter: Char? = null
+        filtered.forEach { c ->
+            val letter = c.name.firstOrNull()?.uppercaseChar()?.takeIf(Char::isLetter) ?: '#'
+            if (query.isBlank() && letter != lastLetter) {
+                lastLetter = letter
+                item(key = "h:$letter") { SectionHeader(letter.toString(), spec) }
+            }
+            item(key = c.id) {
+                FilledTonalButton(
+                    onClick = { onOpen(c.id) },
+                    modifier = morph(spec),
+                    transformation = surface(spec),
+                    colors = ButtonDefaults.filledTonalButtonColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                    icon = { PastelAvatar(c.name, size = 30.dp) },
+                    label = {
+                        Text(
+                            c.name.ifBlank { "No name" } + if (c.favorite) " ★" else "",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.labelLarge.copy(textDirection = TextDirection.Content),
+                        )
+                    },
+                    secondaryLabel = c.phones.firstOrNull()?.let { { Text(formatPhone(it), maxLines = 1, color = BridgePalette.TextSecondary) } },
+                )
             }
         }
     }
-}
-
-@Composable
-private fun ContactRow(c: Contact, onOpen: (String) -> Unit) {
-    FilledTonalButton(
-        onClick = { onOpen(c.id) },
-        modifier = Modifier.fillMaxWidth(),
-        icon = { Avatar(c, 28) },
-        label = { Text(c.name.ifBlank { "No name" }, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.labelLarge.copy(textDirection = TextDirection.Content)) },
-        secondaryLabel = c.phones.firstOrNull()?.let { { Text(formatPhone(it), maxLines = 1) } },
-    )
 }
 
 @Composable
@@ -128,59 +160,49 @@ fun ContactDetailScreen(id: String) {
     val request by BridgeGraph.callRequest.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val c = remember(all, id) { all.firstOrNull { it.id == id } }
-    val listState = rememberTransformingLazyColumnState()
     LaunchedEffect(id) { BridgeGraph.callRequestFlow.value = CallRequestState.IDLE }
 
-    ScreenScaffold(scrollState = listState) { padding ->
-        TransformingLazyColumn(state = listState, contentPadding = padding) {
-            if (c == null) {
-                item { ListHeader { Text("Contact removed", textAlign = TextAlign.Center) } }
-                return@TransformingLazyColumn
-            }
-            // ListHeader gives the first row its round-screen inset below the clock.
-            item { ListHeader { Avatar(c, 40) } }
-            item {
+    BridgeList { spec ->
+        if (c == null) {
+            item { Note(spec, "Contact removed", MaterialTheme.colorScheme.onSurface) }
+            return@BridgeList
+        }
+        item {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = morph(spec)) {
+                PastelAvatar(c.name, size = 52.dp)
                 Text(
-                    c.name.ifBlank { "No name" } + if (c.favorite) "  ★" else "",
+                    c.name.ifBlank { "No name" } + if (c.favorite) " ★" else "",
                     style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
                     textAlign = TextAlign.Center,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp, start = 20.dp, end = 20.dp),
                 )
-            }
-            items(c.phones, key = { "p:$it" }) { phone ->
-                Button(
-                    onClick = {
-                        haptics.performHapticFeedback(HapticFeedbackType.Confirm)
-                        BridgeGraph.callFromIphone(phone, c.name)
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text(formatPhone(phone), maxLines = 1) },
-                    secondaryLabel = { Text("Call from iPhone") },
-                )
-            }
-            when (request) {
-                CallRequestState.SENT -> item { Caption("Confirm the call on your iPhone.") }
-                CallRequestState.NO_APP -> item { Caption("Open Bridge on your iPhone, then try again.") }
-                CallRequestState.IDLE -> if (c.phones.isNotEmpty()) item { Caption("iOS asks you to confirm calls on the iPhone.") }
-            }
-            if (c.emails.isNotEmpty()) {
-                item { ListHeader { Text("Email") } }
-                items(c.emails, key = { "e:$it" }) { ContentText(it, style = MaterialTheme.typography.bodySmall) }
             }
         }
-    }
-}
-
-/** Initials on a colour picked from the name, so the same person always looks the same. */
-@Composable
-private fun Avatar(c: Contact, sizeDp: Int) {
-    val initials = c.name.split(' ').filter { it.isNotBlank() }.take(2).mapNotNull { it.firstOrNull()?.uppercaseChar() }
-        .joinToString("").ifEmpty { "#" }
-    val color = AVATAR_COLORS[(c.name.hashCode() and 0x7FFFFFFF) % AVATAR_COLORS.size]
-    Box(Modifier.size(sizeDp.dp).background(color, CircleShape), contentAlignment = Alignment.Center) {
-        Text(initials, style = if (sizeDp > 32) MaterialTheme.typography.titleMedium else MaterialTheme.typography.labelMedium, color = Color.White)
+        items(c.phones, key = { "p:$it" }) { phone ->
+            Button(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.Confirm)
+                    BridgeGraph.callFromIphone(phone, c.name)
+                },
+                modifier = morph(spec),
+                transformation = surface(spec),
+                colors = ButtonDefaults.buttonColors(containerColor = BridgePalette.CallGreen, contentColor = androidx.compose.ui.graphics.Color.White),
+                icon = { Icon(painterResource(R.drawable.ic_call), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize)) },
+                label = { Text(formatPhone(phone), maxLines = 1) },
+                secondaryLabel = { Text("Call from iPhone") },
+            )
+        }
+        when (request) {
+            CallRequestState.SENT -> item { Note(spec, "Confirm the call on your iPhone.", BridgePalette.Connected) }
+            CallRequestState.NO_APP -> item { Note(spec, "Open Bridge on your iPhone, then try again.", BridgePalette.Attention) }
+            CallRequestState.IDLE -> if (c.phones.isNotEmpty()) item { Note(spec, "iOS asks you to confirm calls on the iPhone.", BridgePalette.TextTertiary) }
+        }
+        if (c.emails.isNotEmpty()) {
+            item { SectionHeader("Email", spec) }
+            items(c.emails, key = { "e:$it" }) { Note(spec, it, MaterialTheme.colorScheme.onSurface) }
+        }
     }
 }
 
@@ -194,10 +216,6 @@ fun formatPhone(p: String): String {
     val body = if (tail.length == 10) "${tail.take(5)} ${tail.drop(5)}" else tail
     return listOfNotNull((if (plus) "+" else "") + head, body).filter { it.isNotEmpty() && it != "+" }.joinToString(" ")
 }
-
-private val AVATAR_COLORS = listOf(
-    Color(0xFF5B8DEF), Color(0xFF34A853), Color(0xFFE8710A), Color(0xFFA142F4), Color(0xFFD93025), Color(0xFF12B5CB), Color(0xFFE52592),
-)
 
 private const val SEARCH_KEY = "query"
 private const val ACTION_REMOTE_INPUT = "android.support.wearable.input.action.REMOTE_INPUT"

@@ -31,7 +31,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         readDeepLink(intent)
         setContent {
-            MaterialTheme {
+            io.wearbridge.watch.ui.theme.BridgeTheme {
                 WatchApp(
                     hasPermissions = hasPermissions,
                     deepLinkUid = deepLinkUid,
@@ -108,11 +108,10 @@ private fun WatchApp(
                     onOpenMedia = { nav.navigate("media") },
                     onOpenFindPhone = { nav.navigate("find") },
                     onOpenContacts = { nav.navigate("contacts") },
-                    onOpenDiagnostics = { nav.navigate("diagnostics") },
                     onOpenSettings = { nav.navigate("settings") },
                 )
             }
-            composable("settings") { SettingsScreen() }
+            composable("settings") { SettingsScreen(onOpenDiagnostics = { nav.navigate("diagnostics") }) }
             composable("media") { MediaScreen() }
             composable("contacts") {
                 io.wearbridge.watch.contacts.ContactsScreen(onOpen = { id -> nav.navigate("contact/" + android.net.Uri.encode(id)) })

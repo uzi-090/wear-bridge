@@ -92,6 +92,6 @@ class BridgeSettings(context: Context) {
  * (that lands on the watch face), so no "banner" option is offered.
  */
 enum class PopupStyle(val label: String, val description: String) {
-    FULL("Standard", "Full screen over the watch face, a small banner inside apps"),
-    SUBTLE("Subtle", "Vibrates only. The notification waits in the list, with no pop-up"),
+    FULL("Standard", "Pops up and vibrates"),
+    SUBTLE("Subtle", "Vibrates, no pop-up"),
 }

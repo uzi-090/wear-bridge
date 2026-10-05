@@ -105,7 +105,7 @@ class IncomingCallActivity : ComponentActivity() {
         })
 
         setContent {
-            MaterialTheme {
+            io.wearbridge.watch.ui.theme.BridgeTheme {
                 val ui by BridgeGraph.calls.ui.collectAsStateWithLifecycle()
                 LaunchedEffect(ui) {
                     // Nothing to show: wait briefly (answering removes the ringing call just before iOS
@@ -302,7 +302,8 @@ private fun Avatar(caller: Caller, ringing: Boolean, size: Dp = 50.dp) {
     val reduceMotion = rememberReduceMotion()
     val t = rememberInfiniteTransition(label = "ripple")
     val phase by t.animateFloat(0f, 1f, infiniteRepeatable(tween(1_800, easing = LinearEasing), RepeatMode.Restart), label = "p")
-    val color = avatarColor(caller)
+    val key = caller.contact?.name ?: caller.name
+    val (color, ink) = if (caller.initials.isEmpty()) Color(0xFF3A3F46) to Color.White else io.wearbridge.watch.ui.theme.Avatars.colors(key)
     Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size + 12.dp)) {
         if (ringing && !reduceMotion) {
             for (offset in listOf(0f, 0.5f)) {
@@ -318,7 +319,7 @@ private fun Avatar(caller: Caller, ringing: Boolean, size: Dp = 50.dp) {
         }
         Box(Modifier.size(size).background(color, CircleShape), contentAlignment = Alignment.Center) {
             if (caller.initials.isNotEmpty()) {
-                Text(caller.initials, style = MaterialTheme.typography.titleLarge, color = Color.White)
+                Text(caller.initials, style = MaterialTheme.typography.titleLarge, color = ink)
             } else {
                 Icon(painterResource(R.drawable.ic_call), contentDescription = null, tint = Color.White, modifier = Modifier.size(28.dp))
             }
@@ -453,15 +454,6 @@ private fun rememberReduceMotion(): Boolean {
     return remember {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
-}
-
-/** The contact's colour, the same one the contacts screens use, so a person always looks the same. */
-private fun avatarColor(caller: Caller): Color {
-    val palette = listOf(
-        Color(0xFF5B8DEF), Color(0xFF34A853), Color(0xFFE8710A), Color(0xFFA142F4), Color(0xFFD93025), Color(0xFF12B5CB), Color(0xFFE52592),
-    )
-    val key = caller.contact?.name ?: caller.name
-    return if (caller.initials.isEmpty()) Color(0xFF3A3A3C) else palette[(key.hashCode() and 0x7FFFFFFF) % palette.size]
 }
 
 private fun duration(ms: Long): String {

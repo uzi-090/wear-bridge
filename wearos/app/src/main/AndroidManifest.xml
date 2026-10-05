@@ -26,7 +26,7 @@
         android:icon="@drawable/ic_launcher"
         android:label="Bridge"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:theme="@style/Theme.Bridge">
 
         <!-- Runs without any Android phone. -->
         <meta-data

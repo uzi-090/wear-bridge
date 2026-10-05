@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -135,10 +136,11 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         val builder = NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_stat_bridge)
             .setLargeIcon(badge(n.app))
+            .setColor(n.app.color.toInt()) // the app's brand colour tints the notification's accents
             .setContentTitle(title)
             .setContentText(body)
             .setSubText(n.appLabel)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setStyle(styleFor(n, body))
             .setWhen(n.timeMillis)
             .setShowWhen(true)
             .setOnlyAlertOnce(true)
@@ -220,6 +222,49 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
             .filter { it.tag == TAG }
             .forEach { manager.cancel(TAG, it.id) }
     }
+
+    /**
+     * Chats get Android's conversation style (sender name and avatar, then the message), which is how
+     * Wear OS presents native messages. Everything else, and anything hidden, is plain big text.
+     */
+    private fun styleFor(n: WatchNotification, body: String): NotificationCompat.Style {
+        val a = n.ancs
+        val chat = !n.masked && a.title.isNotBlank() && a.message.isNotBlank() &&
+            (n.app.kind == AppKind.MESSAGING || a.category == io.wearbridge.ancs.Category.SOCIAL)
+        if (!chat) return NotificationCompat.BigTextStyle().bigText(body)
+        val sender = androidx.core.app.Person.Builder()
+            .setName(a.title)
+            .setIcon(androidx.core.graphics.drawable.IconCompat.createWithBitmap(personAvatar(a.title)))
+            .build()
+        val me = androidx.core.app.Person.Builder().setName("You").build()
+        return NotificationCompat.MessagingStyle(me)
+            .addMessage(listOf(a.subtitle, a.message).filter { it.isNotBlank() }.joinToString("\n"), n.timeMillis, sender)
+    }
+
+    private val avatars = HashMap<String, android.graphics.Bitmap>()
+
+    /** The same pastel initials avatar the app draws (Avatars), as a bitmap for the system UI. */
+    private fun personAvatar(name: String): android.graphics.Bitmap = synchronized(avatars) {
+        avatars.getOrPut(name) {
+            val size = 96
+            val (fill, ink) = io.wearbridge.watch.ui.theme.Avatars.colors(name)
+            val initials = io.wearbridge.watch.ui.theme.Avatars.initials(name).ifEmpty { "•" }
+            val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+            val c = android.graphics.Canvas(bmp)
+            val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            p.color = fill.toArgbInt()
+            c.drawCircle(size / 2f, size / 2f, size / 2f, p)
+            p.color = ink.toArgbInt()
+            p.textSize = size * 0.4f
+            p.typeface = android.graphics.Typeface.create(android.graphics.Typeface.DEFAULT, android.graphics.Typeface.BOLD)
+            p.textAlign = android.graphics.Paint.Align.CENTER
+            c.drawText(initials, size / 2f, size / 2f - (p.descent() + p.ascent()) / 2f, p)
+            if (avatars.size > 64) avatars.clear()
+            bmp
+        }
+    }
+
+    private fun androidx.compose.ui.graphics.Color.toArgbInt(): Int = toArgb()
 
     fun serviceNotification(statusText: String) =
         NotificationCompat.Builder(context, CHANNEL_SERVICE)
