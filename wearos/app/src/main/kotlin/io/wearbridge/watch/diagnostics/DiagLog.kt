@@ -46,6 +46,22 @@ object Redact {
      */
     fun uid(uid: Long): String = "u" + ((java.lang.Long.hashCode(uid * -0x61c8864680b583ebL xor salt)) and 0xFFFF).toString(16)
 
+    /** Readable names for well-known GATT services (public identifiers, not personal data). */
+    fun serviceName(uuid: java.util.UUID): String {
+        val s = uuid.toString().uppercase()
+        return KNOWN_SERVICES[s] ?: if (s.endsWith("-0000-1000-8000-00805F9B34FB")) "0x" + s.substring(4, 8) else s.substring(0, 8)
+    }
+
+    private val KNOWN_SERVICES = mapOf(
+        "7905F431-B5CE-4E99-A40F-4B1E122D00D0" to "ANCS",
+        "89D3502B-0F36-433A-8EF4-C502AD55F8DC" to "AMS",
+        "D0611E78-BBB4-4591-A5F8-487910AE4366" to "Continuity",
+        "9FA480E0-4967-4542-9390-D343DC5D04AE" to "AppleNearby",
+        "0000180F-0000-1000-8000-00805F9B34FB" to "Battery",
+        "0000180A-0000-1000-8000-00805F9B34FB" to "DeviceInfo",
+        "00001805-0000-1000-8000-00805F9B34FB" to "CurrentTime",
+    )
+
     /** A short, non-reversible tag so log lines about the same device can be correlated. */
     fun device(device: BluetoothDevice?): String =
         device?.address?.let { "dev#" + (it.hashCode() and 0xFFFF).toString(16) } ?: "dev#none"

@@ -18,4 +18,5 @@ rootProject.name = "WearBridge"
 
 include(":ancs")
 include(":protocol")
+include(":ams")
 include(":app")

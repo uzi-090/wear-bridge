@@ -22,6 +22,15 @@ class ProtocolTest {
     }
 
     @Test
+    fun `snapshot with watch prefs round-trips, and older snapshots decode without them`() {
+        val withPrefs = snapshot.copy(prefs = WatchPrefs(PopupCode.SUBTLE, history = true, endCall = false))
+        assertEquals(withPrefs, SettingsCodec.decodeSnapshot(SettingsCodec.encodeSnapshot(withPrefs)))
+        assertEquals(null, SettingsCodec.decodeSnapshot(SettingsCodec.encodeSnapshot(snapshot)).prefs)
+        val p = WatchPrefs(PopupCode.STANDARD, history = false, endCall = true)
+        assertEquals(p, SettingsCodec.decodeSetPrefs(SettingsCodec.encodeSetPrefs(p)))
+    }
+
+    @Test
     fun `set app rule and mode round-trip`() {
         val rule = SetAppRule("net.whatsapp.WhatsApp", enabled = true, vibrate = false, hideContent = false)
         assertEquals(rule, SettingsCodec.decodeSetAppRule(SettingsCodec.encodeSetAppRule(rule)))

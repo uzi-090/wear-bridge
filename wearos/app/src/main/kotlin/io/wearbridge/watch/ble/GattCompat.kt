@@ -33,3 +33,22 @@ fun BluetoothGatt.writeCharacteristicCompat(
         characteristic.value = value
         writeCharacteristic(characteristic)
     }
+
+/** Enables notifications (local + CCCD write) through [queue]. Returns the GATT status (0 = success). */
+@SuppressLint("MissingPermission")
+suspend fun BluetoothGatt.enableNotifications(queue: GattOpQueue, characteristic: BluetoothGattCharacteristic): Int {
+    if (!setCharacteristicNotification(characteristic, true)) return GattOpQueue.STATUS_NOT_STARTED
+    val cccd = characteristic.getDescriptor(CCCD_UUID) ?: return GattOpQueue.STATUS_NOT_STARTED
+    return queue.run(GattOpQueue.Kind.WRITE_DESCRIPTOR) {
+        writeDescriptorCompat(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+    }.status
+}
+
+/** Reads a characteristic through [queue]. Null on failure. */
+@SuppressLint("MissingPermission")
+suspend fun BluetoothGatt.readValue(queue: GattOpQueue, characteristic: BluetoothGattCharacteristic): ByteArray? {
+    val r = queue.run(GattOpQueue.Kind.READ_CHARACTERISTIC) { readCharacteristic(characteristic) }
+    return if (r.ok) r.value else null
+}
+
+private val CCCD_UUID: java.util.UUID = java.util.UUID.fromString("00002902-0000-1000-8000-00805F9B34FB")

@@ -6,9 +6,12 @@ import io.wearbridge.protocol.AppEntry
 import io.wearbridge.protocol.Framing
 import io.wearbridge.protocol.MessageType
 import io.wearbridge.protocol.ModeCode
+import io.wearbridge.protocol.PopupCode
 import io.wearbridge.protocol.Reassembler
 import io.wearbridge.protocol.SettingsCodec
 import io.wearbridge.protocol.SettingsSnapshot
+import io.wearbridge.protocol.WatchPrefs
+import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.ble.BridgePeripheral
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
@@ -17,7 +20,9 @@ import io.wearbridge.watch.notifications.AppKind
 import io.wearbridge.watch.notifications.AppRule
 import io.wearbridge.watch.notifications.FilterMode
 import io.wearbridge.watch.settings.AppIconStore
+import io.wearbridge.watch.settings.BridgeSettings
 import io.wearbridge.watch.settings.PolicyStore
+import io.wearbridge.watch.settings.PopupStyle
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -34,6 +39,7 @@ class SettingsChannel(
     private val peripheral: BridgePeripheral,
     private val policy: PolicyStore,
     private val icons: AppIconStore,
+    private val settings: BridgeSettings,
     private val scope: CoroutineScope,
 ) {
     private val reassemblers = HashMap<String, Reassembler>()
@@ -43,7 +49,10 @@ class SettingsChannel(
 
     init {
         scope.launch {
-            combine(policy.mode, policy.rules, policy.seenApps, icons.version) { _, _, _, _ -> }.drop(1).collect { schedulePush() }
+            combine(
+                policy.mode, policy.rules, policy.seenApps, icons.version,
+                combine(settings.popupStyle, settings.history, settings.endCallFromWatch) { _, _, _ -> },
+            ) { _, _, _, _, _ -> }.drop(1).collect { schedulePush() }
         }
     }
 
@@ -93,6 +102,13 @@ class SettingsChannel(
                     val ok = icons.save(bundleId, image)
                     DiagLog.i("settings: icon app=$bundleId ${image.size}B saved=$ok")
                 }
+                MessageType.SET_PREFS -> {
+                    val p = SettingsCodec.decodeSetPrefs(message.payload)
+                    settings.setPopupStyle(if (p.popupStyle == PopupCode.SUBTLE) PopupStyle.SUBTLE else PopupStyle.FULL)
+                    BridgeGraph.setHistory(p.history)
+                    settings.setEndCallFromWatch(p.endCall)
+                    DiagLog.i("settings: prefs popup=${p.popupStyle} history=${p.history} endCall=${p.endCall}")
+                }
                 else -> DiagLog.w("settings: unknown message type ${message.type}")
             }
         } catch (e: IllegalArgumentException) {
@@ -136,7 +152,12 @@ class SettingsChannel(
                     hasIcon = icons.has(info.bundleId),
                 )
             }
-        return SettingsSnapshot(modeToCode(policy.mode.value), apps)
+        val prefs = WatchPrefs(
+            popupStyle = if (settings.popupStyle.value == PopupStyle.SUBTLE) PopupCode.SUBTLE else PopupCode.STANDARD,
+            history = settings.history.value,
+            endCall = settings.endCallFromWatch.value,
+        )
+        return SettingsSnapshot(modeToCode(policy.mode.value), apps, prefs)
     }
 
     private companion object {

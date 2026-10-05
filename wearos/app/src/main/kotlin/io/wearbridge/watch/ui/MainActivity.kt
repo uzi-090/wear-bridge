@@ -105,11 +105,13 @@ private fun WatchApp(
                     hasPermissions = hasPermissions,
                     onRequestPermissions = onRequestPermissions,
                     onOpenNotifications = { nav.navigate("notifications") },
+                    onOpenMedia = { nav.navigate("media") },
                     onOpenDiagnostics = { nav.navigate("diagnostics") },
                     onOpenSettings = { nav.navigate("settings") },
                 )
             }
             composable("settings") { SettingsScreen() }
+            composable("media") { MediaScreen() }
             composable("notifications") {
                 NotificationListScreen(
                     onOpen = { uid -> nav.navigate("notification/$uid") },

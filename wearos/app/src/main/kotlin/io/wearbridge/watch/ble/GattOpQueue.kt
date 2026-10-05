@@ -13,9 +13,10 @@ import kotlinx.coroutines.withTimeoutOrNull
  * [complete] is thread-safe and may be called directly from Binder callback threads.
  */
 class GattOpQueue {
-    enum class Kind { CONNECT, MTU, DISCOVER, WRITE_DESCRIPTOR, WRITE_CHARACTERISTIC }
+    enum class Kind { CONNECT, MTU, DISCOVER, WRITE_DESCRIPTOR, WRITE_CHARACTERISTIC, READ_CHARACTERISTIC }
 
-    data class Result(val status: Int) {
+    /** [value] is set for reads. */
+    class Result(val status: Int, val value: ByteArray? = null) {
         val ok: Boolean get() = status == 0
     }
 
@@ -37,9 +38,9 @@ class GattOpQueue {
         }
     }
 
-    fun complete(kind: Kind, status: Int) {
+    fun complete(kind: Kind, status: Int, value: ByteArray? = null) {
         val p = pending ?: return
-        if (p.kind == kind) p.deferred.complete(Result(status))
+        if (p.kind == kind) p.deferred.complete(Result(status, value))
     }
 
     /** Fails whatever is outstanding, e.g. on disconnect. */

@@ -3,12 +3,11 @@ package io.wearbridge.watch.ancs
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothGatt
 import android.bluetooth.BluetoothGattCharacteristic
-import android.bluetooth.BluetoothGattDescriptor
 import io.wearbridge.ancs.AncsSession
 import io.wearbridge.ancs.AncsUuids
 import io.wearbridge.watch.ble.GattOpQueue
 import io.wearbridge.watch.ble.writeCharacteristicCompat
-import io.wearbridge.watch.ble.writeDescriptorCompat
+import io.wearbridge.watch.ble.enableNotifications
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -48,7 +47,7 @@ class AncsClient(
         if (ns == null || ds == null || cp == null) return SubscribeResult.NOT_FOUND
         controlPoint = cp
         for (characteristic in listOf(ds, ns)) {
-            val status = enableNotifications(characteristic)
+            val status = gatt.enableNotifications(queue, characteristic)
             if (status != 0) {
                 return if (status in AUTH_STATUSES) SubscribeResult.AUTH_REQUIRED else SubscribeResult.FAILED
             }
@@ -75,14 +74,6 @@ class AncsClient(
             }
             session.onControlPointWriteResult(token, status)
         }
-    }
-
-    private suspend fun enableNotifications(characteristic: BluetoothGattCharacteristic): Int {
-        if (!gatt.setCharacteristicNotification(characteristic, true)) return GattOpQueue.STATUS_NOT_STARTED
-        val cccd = characteristic.getDescriptor(AncsUuids.CCCD) ?: return GattOpQueue.STATUS_NOT_STARTED
-        return queue.run(GattOpQueue.Kind.WRITE_DESCRIPTOR) {
-            gatt.writeDescriptorCompat(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
-        }.status
     }
 
     private companion object {

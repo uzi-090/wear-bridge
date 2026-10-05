@@ -12,6 +12,7 @@ import android.os.Build
 import io.wearbridge.ancs.AncsSession
 import io.wearbridge.ancs.AncsUuids
 import io.wearbridge.watch.ancs.AncsClient
+import io.wearbridge.watch.media.AmsClient
 import kotlinx.coroutines.CoroutineScope
 import java.util.UUID
 
@@ -33,7 +34,8 @@ class GattSession(
         fun onMtu(session: GattSession, mtu: Int)
     }
 
-    data class Discovery(val ok: Boolean, val status: Int, val hasAncs: Boolean, val serviceCount: Int)
+    /** [services] are the iPhone's GATT service UUIDs (public Bluetooth SIG / Apple service IDs, not personal data). */
+    data class Discovery(val ok: Boolean, val status: Int, val hasAncs: Boolean, val serviceCount: Int, val services: List<UUID> = emptyList())
 
     val queue = GattOpQueue()
     private var gatt: BluetoothGatt? = null
@@ -54,11 +56,16 @@ class GattSession(
     suspend fun discover(): Discovery {
         val g = gatt ?: return Discovery(false, GattOpQueue.STATUS_NOT_STARTED, false, 0)
         val r = queue.run(GattOpQueue.Kind.DISCOVER, timeoutMs = 20_000) { g.discoverServices() }
-        return Discovery(r.ok, r.status, g.getService(AncsUuids.SERVICE) != null, g.services.size)
+        return Discovery(r.ok, r.status, g.getService(AncsUuids.SERVICE) != null, g.services.size, g.services.map { it.uuid })
     }
 
     fun ancsClient(scope: CoroutineScope, listener: AncsSession.Listener): AncsClient? =
         gatt?.let { AncsClient(it, queue, scope, listener) }
+
+    fun amsClient(listener: AmsClient.Listener): AmsClient? = gatt?.let { AmsClient(it, queue, listener) }
+
+    fun phoneServices(listener: PhoneServicesClient.Listener): PhoneServicesClient? =
+        gatt?.let { PhoneServicesClient(it, queue, listener) }
 
     fun close() {
         queue.failAll()
@@ -99,6 +106,17 @@ class GattSession(
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 listener.onCharacteristicChanged(this@GattSession, c.uuid, c.value.copyOf())
+            }
+        }
+
+        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) =
+            queue.complete(GattOpQueue.Kind.READ_CHARACTERISTIC, status, value.copyOf())
+
+        @Deprecated("Pre-API 33 delivery path")
+        @Suppress("DEPRECATION")
+        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                queue.complete(GattOpQueue.Kind.READ_CHARACTERISTIC, status, c.value?.copyOf())
             }
         }
 

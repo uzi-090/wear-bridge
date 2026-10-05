@@ -39,18 +39,23 @@ import androidx.wear.compose.material3.Text
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.ble.LinkSnapshot
 import io.wearbridge.watch.ble.LinkState
+import io.wearbridge.watch.ble.PhoneServicesClient
 
 @Composable
 fun HomeScreen(
     hasPermissions: Boolean,
     onRequestPermissions: () -> Unit,
     onOpenNotifications: () -> Unit,
+    onOpenMedia: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val items by BridgeGraph.repository.items.collectAsStateWithLifecycle()
     val phone by BridgeGraph.phoneName.collectAsStateWithLifecycle()
+    val model by BridgeGraph.phoneModel.collectAsStateWithLifecycle()
+    val battery by BridgeGraph.phoneBattery.collectAsStateWithLifecycle()
+    val media by BridgeGraph.media.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
     val context = LocalContext.current
 
@@ -58,10 +63,12 @@ fun HomeScreen(
         TransformingLazyColumn(state = listState, contentPadding = padding) {
             item { ListHeader { Text("Bridge") } }
             item { StatusRow(link) }
-            if (link.state == LinkState.READY && phone != null) {
+            if (link.state == LinkState.READY && (phone != null || model != null)) {
                 item {
+                    // "iPhone 16 Pro · 72%": the model from Device Information, the level from Battery Service.
+                    val name = if (model != null) PhoneServicesClient.marketingName(model) else phone!!
                     Text(
-                        phone!!,
+                        listOfNotNull(name, battery?.let { "$it%" }).joinToString(" · "),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -106,6 +113,26 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Notifications") },
                     secondaryLabel = { Text(if (items.isEmpty()) "None" else "${items.size}") },
+                )
+            }
+            item {
+                val np = media
+                FilledTonalButton(
+                    onClick = onOpenMedia,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Now playing") },
+                    secondaryLabel = {
+                        Text(
+                            when {
+                                np == null -> "iPhone media controls"
+                                !np.hasPlayer -> "Nothing playing"
+                                else -> np.title.ifBlank { np.playerName }
+                            },
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                        )
+                    },
+                    icon = { androidx.wear.compose.material3.Icon(androidx.compose.ui.res.painterResource(io.wearbridge.watch.R.drawable.ic_music_note), contentDescription = null) },
                 )
             }
             item {

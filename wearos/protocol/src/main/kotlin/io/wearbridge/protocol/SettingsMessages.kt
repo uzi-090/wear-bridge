@@ -7,6 +7,8 @@ object MessageType {
     const val SET_MODE = 0x03
     /** str bundleId + image bytes (JPEG/PNG, ≤ 32 KB). The iPhone fetches official App Store icons. */
     const val SET_APP_ICON = 0x04
+    /** u8 popup style, u8 flags (bit0 history, bit1 experimental End Call). */
+    const val SET_PREFS = 0x05
     const val SETTINGS = 0x81
 }
 
@@ -35,7 +37,16 @@ data class AppEntry(
     val hasIcon: Boolean = false,
 )
 
-data class SettingsSnapshot(val mode: Int, val apps: List<AppEntry>)
+/** Watch-wide preferences. [popupStyle] uses [PopupCode]. */
+data class WatchPrefs(val popupStyle: Int, val history: Boolean, val endCall: Boolean)
+
+object PopupCode {
+    const val STANDARD = 0
+    const val SUBTLE = 1
+}
+
+/** [prefs] is a trailer added in v1.1. Older watches don't send it, so it's optional. */
+data class SettingsSnapshot(val mode: Int, val apps: List<AppEntry>, val prefs: WatchPrefs? = null)
 
 data class SetAppRule(val bundleId: String, val enabled: Boolean, val vibrate: Boolean, val hideContent: Boolean?)
 
@@ -56,6 +67,7 @@ object SettingsCodec {
             u32(a.color)
             str(a.logo)
         }
+        s.prefs?.let { u8(it.popupStyle); u8(prefsFlags(it)) }
     }.bytes()
 
     fun decodeSnapshot(bytes: ByteArray): SettingsSnapshot {
@@ -71,8 +83,20 @@ object SettingsCodec {
             val logo = r.str()
             AppEntry(bundleId, name, f and 1 != 0, f and 2 != 0, hide, f and 4 != 0, color, logo, f and 8 != 0)
         }
-        return SettingsSnapshot(mode, apps)
+        val prefs = if (r.remaining >= 2) decodePrefsFields(r.u8(), r.u8()) else null
+        return SettingsSnapshot(mode, apps, prefs)
     }
+
+    fun encodeSetPrefs(p: WatchPrefs): ByteArray = byteArrayOf(p.popupStyle.toByte(), prefsFlags(p).toByte())
+
+    fun decodeSetPrefs(bytes: ByteArray): WatchPrefs {
+        require(bytes.size == 2) { "bad SET_PREFS" }
+        return decodePrefsFields(bytes[0].toInt() and 0xFF, bytes[1].toInt() and 0xFF)
+    }
+
+    private fun prefsFlags(p: WatchPrefs) = (if (p.history) 1 else 0) or (if (p.endCall) 2 else 0)
+
+    private fun decodePrefsFields(popup: Int, flags: Int) = WatchPrefs(popup, history = flags and 1 != 0, endCall = flags and 2 != 0)
 
     fun encodeSetAppRule(m: SetAppRule): ByteArray = Writer().apply {
         str(m.bundleId)
@@ -123,6 +147,7 @@ object SettingsCodec {
     private class Reader(private val b: ByteArray) {
         private var p = 0
         val position: Int get() = p
+        val remaining: Int get() = b.size - p
         fun u8(): Int {
             require(p < b.size) { "truncated" }
             return b[p++].toInt() and 0xFF

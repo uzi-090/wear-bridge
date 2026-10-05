@@ -31,6 +31,19 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             BridgeGraph.deleteAll()
             io.wearbridge.watch.diagnostics.DiagLog.i("demo mode ON")
         }
+        // `--es media VOLUME_UP` sends a real AMS command. `--ez fake_media true` shows fake Now Playing (demo mode).
+        intent.getStringExtra("media")?.let { name ->
+            io.wearbridge.ams.RemoteCommand.entries.firstOrNull { it.name == name }?.let(BridgeGraph::mediaCommand)
+            return
+        }
+        if (intent.getBooleanExtra("fake_media", false) && BridgeGraph.demoMode) {
+            BridgeGraph.mediaFlow.value = io.wearbridge.ams.NowPlaying(
+                playerName = "Music", state = io.wearbridge.ams.PlaybackState.PLAYING, rate = 1.0,
+                elapsedSeconds = 74.0, elapsedAtMillis = android.os.SystemClock.elapsedRealtime(),
+                title = "Sample Track Title", artist = "Demo Artist", durationSeconds = 215.0, volume = 0.6f,
+            )
+            return
+        }
         if (intent.getBooleanExtra("style_only", false)) return
         val uid = intent.getLongExtra("uid", 900_000L + (System.currentTimeMillis() / 1000 % 1000))
         val sample = AncsNotification(

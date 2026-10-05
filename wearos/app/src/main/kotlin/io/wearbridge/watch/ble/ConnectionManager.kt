@@ -10,6 +10,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
+import io.wearbridge.ams.AmsUuids
+import io.wearbridge.ams.NowPlaying
+import io.wearbridge.ams.RemoteCommand
 import io.wearbridge.ancs.ActionId
 import io.wearbridge.ancs.AncsUuids
 import io.wearbridge.watch.BridgeGraph
@@ -18,6 +21,7 @@ import io.wearbridge.watch.ancs.AncsClient
 import io.wearbridge.watch.bridge.SettingsChannel
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
+import io.wearbridge.watch.media.AmsClient
 import io.wearbridge.watch.notifications.ActionStatus
 import io.wearbridge.watch.notifications.NotificationEngine
 import io.wearbridge.watch.notifications.NotificationRepository
@@ -57,11 +61,13 @@ class ConnectionManager(
     private val peripheral = BridgePeripheral(context, PeripheralListener())
     private val pairing = PairingManager(scope, onBonded = { dispatch(LinkEvent.Bonded) }, onFailed = { dispatch(LinkEvent.BondFailed) })
     private val reconnection = ReconnectionManager(scope) { dispatch(LinkEvent.RetryTimer) }
-    private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, BridgeGraph.icons, scope)
+    private val settingsChannel = SettingsChannel(peripheral, BridgeGraph.policy, BridgeGraph.icons, BridgeGraph.settings, scope)
 
     private var device: BluetoothDevice? = null
     private var session: GattSession? = null
     private var ancs: AncsClient? = null
+    private var ams: AmsClient? = null
+    private var phoneServices: PhoneServicesClient? = null
     private var setupJob: Job? = null
     private var receiversRegistered = false
 
@@ -75,6 +81,7 @@ class ConnectionManager(
         data class Action(val uid: Long, val action: ActionId) : Msg
         data class SettingsChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
         data class SettingsSubscription(val device: BluetoothDevice, val subscribed: Boolean) : Msg
+        data class Media(val command: RemoteCommand) : Msg
         data object Shutdown : Msg
     }
 
@@ -100,6 +107,8 @@ class ConnectionManager(
     fun performAction(uid: Long, action: ActionId) = post(Msg.Action(uid, action))
 
     fun reconnect() = post(Msg.Link(LinkEvent.UserReconnect))
+
+    fun mediaCommand(command: RemoteCommand) = post(Msg.Media(command))
 
     private fun post(msg: Msg) {
         inbox.trySend(msg)
@@ -141,8 +150,25 @@ class ConnectionManager(
                 dispatch(LinkEvent.SetupFailed)
             }
             is Msg.Characteristic -> if (msg.session === session) {
-                if (msg.uuid == AncsUuids.NOTIFICATION_SOURCE) engine.onSourcePacket(msg.value)
-                ancs?.onCharacteristicChanged(msg.uuid, msg.value)
+                when (msg.uuid) {
+                    AmsUuids.REMOTE_COMMAND, AmsUuids.ENTITY_UPDATE -> ams?.let { c ->
+                        // Launched, because a truncated title triggers a GATT read. Runs in order on this dispatcher.
+                        scope.launch { c.onCharacteristicChanged(msg.uuid, msg.value) }
+                    }
+                    PhoneServicesClient.BATTERY_LEVEL -> phoneServices?.onCharacteristicChanged(msg.uuid, msg.value)
+                    else -> {
+                        if (msg.uuid == AncsUuids.NOTIFICATION_SOURCE) engine.onSourcePacket(msg.value)
+                        ancs?.onCharacteristicChanged(msg.uuid, msg.value)
+                    }
+                }
+            }
+            is Msg.Media -> {
+                val c = ams
+                if (c == null) {
+                    DiagLog.i("media ${msg.command} unavailable")
+                } else {
+                    scope.launch { DiagLog.i("media ${msg.command} ${c.send(msg.command)}") }
+                }
             }
             is Msg.BondState -> pairing.onBondStateChanged(msg.device, msg.state, msg.previous)
             is Msg.Action -> {
@@ -188,6 +214,8 @@ class ConnectionManager(
             LinkEffect.ResetSession -> {
                 ancs?.session?.reset()
                 engine.onLinkReset()
+                BridgeGraph.mediaFlow.value = null
+                BridgeGraph.phoneBatteryFlow.value = null
             }
             LinkEffect.DisconnectCentral -> {
                 device?.let(peripheral::disconnect)
@@ -219,6 +247,8 @@ class ConnectionManager(
         setupJob?.cancel()
         pairing.cancel()
         ancs = null
+        ams = null
+        phoneServices = null
         session?.close()
         session = null
     }
@@ -235,6 +265,8 @@ class ConnectionManager(
             }
             val bonded = device?.bondState == BluetoothDevice.BOND_BONDED
             DiagLog.i("services=${r.serviceCount} ancs=${r.hasAncs} bonded=$bonded")
+            // Service UUIDs are public protocol identifiers (no personal data). Logged to document what iOS exposes.
+            DiagLog.i("iPhone services: ${r.services.joinToString(" ") { Redact.serviceName(it) }}")
             dispatch(LinkEvent.ServicesDiscovered(r.hasAncs, bonded))
         }
     }
@@ -249,12 +281,54 @@ class ConnectionManager(
                     DiagLog.i("ancs subscribed")
                     dispatch(LinkEvent.Subscribed)
                     engine.onSubscribed()
+                    startOptionalServices()
                 }
                 else -> {
                     DiagLog.w("ancs subscribe failed $r")
                     ancs = null
                     dispatch(LinkEvent.SubscribeFailed(authRequired = r == AncsClient.SubscribeResult.AUTH_REQUIRED))
                 }
+            }
+        }
+    }
+
+    /**
+     * Media (AMS) and the iPhone's battery/model. Started only once notifications work, and failures
+     * here are logged, never fatal: they can't take ANCS down.
+     */
+    private fun startOptionalServices() {
+        val s = session ?: return
+        scope.launch {
+            val media = s.amsClient(object : AmsClient.Listener {
+                override fun onNowPlaying(state: NowPlaying) {
+                    if (BridgeGraph.demoMode) return // debug screenshots show fake media only
+                    val before = BridgeGraph.mediaFlow.value
+                    BridgeGraph.mediaFlow.value = state
+                    if (before?.hasPlayer != state.hasPlayer || before.state != state.state || before.supported != state.supported) {
+                        DiagLog.i("ams $state") // redacted: state and counts only, never titles
+                    }
+                }
+            })
+            if (media != null && media.start()) {
+                if (session === s) ams = media
+                // With nothing playing, iOS sends no initial values: AMS works, there's just no player yet.
+                if (BridgeGraph.mediaFlow.value == null && !BridgeGraph.demoMode) BridgeGraph.mediaFlow.value = NowPlaying()
+                DiagLog.i("ams ready")
+            } else {
+                DiagLog.i("ams unavailable")
+            }
+            val phone = s.phoneServices(object : PhoneServicesClient.Listener {
+                override fun onPhoneBattery(percent: Int) {
+                    BridgeGraph.phoneBatteryFlow.value = percent
+                }
+                override fun onPhoneModel(model: String) {
+                    BridgeGraph.phoneModelFlow.value = model
+                }
+            })
+            if (phone != null) {
+                val found = phone.start()
+                if (session === s) phoneServices = phone
+                DiagLog.i("phone services battery=${found.battery} deviceInfo=${found.deviceInfo} model=${BridgeGraph.phoneModel.value}")
             }
         }
     }

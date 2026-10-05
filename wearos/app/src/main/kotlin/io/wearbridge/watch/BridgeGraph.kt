@@ -6,6 +6,8 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
+import io.wearbridge.ams.NowPlaying
+import io.wearbridge.ams.RemoteCommand
 import io.wearbridge.ancs.ActionId
 import io.wearbridge.watch.ble.ConnectionManager
 import io.wearbridge.watch.ble.LinkSnapshot
@@ -44,6 +46,18 @@ object BridgeGraph {
     /** The bonded iPhone's Bluetooth name, for on-watch display only. Never logged. */
     internal val phoneNameFlow = MutableStateFlow<String?>(null)
     val phoneName: StateFlow<String?> = phoneNameFlow
+
+    /** iPhone battery from its Battery Service (0x180F), or null when unknown or disconnected. */
+    internal val phoneBatteryFlow = MutableStateFlow<Int?>(null)
+    val phoneBattery: StateFlow<Int?> = phoneBatteryFlow
+
+    /** iPhone model identifier from Device Information (e.g. "iPhone17,1"). */
+    internal val phoneModelFlow = MutableStateFlow<String?>(null)
+    val phoneModel: StateFlow<String?> = phoneModelFlow
+
+    /** The iPhone's Now Playing state over AMS. Null when AMS isn't available (not connected, or unsupported). */
+    internal val mediaFlow = MutableStateFlow<NowPlaying?>(null)
+    val media: StateFlow<NowPlaying?> = mediaFlow
 
     @Volatile
     internal var controller: ConnectionManager? = null
@@ -86,6 +100,10 @@ object BridgeGraph {
     fun setHistory(enabled: Boolean) {
         settings.setHistoryFlag(enabled)
         if (!enabled) repository.clearHistory()
+    }
+
+    fun mediaCommand(command: RemoteCommand) {
+        controller?.mediaCommand(command)
     }
 
     fun reconnect() {
