@@ -23,7 +23,7 @@ class BridgeSettings(context: Context) {
 
     private val _popupStyle = MutableStateFlow(
         PopupStyle.entries.firstOrNull { it.name == prefs.getString(KEY_POPUP, null) }
-            ?: if (prefs.getBoolean(KEY_SUBTLE_LEGACY, false)) PopupStyle.SUBTLE else PopupStyle.BANNER,
+            ?: if (prefs.getBoolean(KEY_SUBTLE_LEGACY, false)) PopupStyle.SUBTLE else PopupStyle.FULL,
     )
 
     /** How alerting notifications appear. See [PopupStyle]. */
@@ -42,12 +42,13 @@ class BridgeSettings(context: Context) {
 }
 
 /**
- * Pop-up presentation on One UI Watch, verified on hardware 2026-10-05. Samsung's system UI picks its
- * small top pop-up when the screen is already on as the notification is posted, and its full-screen
- * pop-up when the screen is off. There's no API to choose the style directly.
+ * Pop-up presentation on One UI Watch, verified on hardware 2026-10-05. Samsung's system UI picks the
+ * style by what's in front: over the watch face it always uses its full-screen pop-up (even with
+ * the screen on), and on top of an open app it uses its small top pop-up. Anything that alerts
+ * (vibrates) gets a pop-up. An app can't choose the style, and waking the screen doesn't change it
+ * (that lands on the watch face), so no "banner" option is offered.
  */
 enum class PopupStyle(val label: String, val description: String) {
-    BANNER("Banner", "Wakes the screen and shows a small pop-up at the top"),
-    FULL("Full screen", "Samsung's full-screen pop-up"),
-    SUBTLE("Subtle", "Vibrates and shows a dot, with no pop-up"),
+    FULL("Standard", "Full screen over the watch face, a small banner inside apps"),
+    SUBTLE("Subtle", "Vibrates only. The notification waits in the list, with no pop-up"),
 }

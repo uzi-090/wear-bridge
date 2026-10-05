@@ -3,10 +3,6 @@ package io.wearbridge.watch.debug
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
-import android.os.PowerManager
-import android.util.Log
 import io.wearbridge.ancs.AncsNotification
 import io.wearbridge.ancs.Category
 import io.wearbridge.watch.BridgeGraph
@@ -20,6 +16,12 @@ import java.time.LocalDateTime
  */
 class SampleNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // Optional extra "style": BANNER / FULL / SUBTLE, to test pop-up styles from adb.
+        intent.getStringExtra("style")?.let { name ->
+            io.wearbridge.watch.settings.PopupStyle.entries.firstOrNull { it.name == name }
+                ?.let(BridgeGraph.settings::setPopupStyle)
+        }
+        if (intent.getBooleanExtra("style_only", false)) return
         val uid = 900_000L + (System.currentTimeMillis() / 1000 % 1000)
         val sample = AncsNotification(
             uid = uid,
@@ -36,26 +38,7 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             negativeActionLabel = "Clear",
         )
         val n = WatchNotification(sample, System.currentTimeMillis())
-        val post = {
-            BridgeGraph.repository.upsert(n)
-            BridgeGraph.notifier.show(n, alert = true)
-        }
-        // Extra "wake_ms": switch the screen on first, then post after that many ms.
-        val wakeMs = intent.getLongExtra("wake_ms", -1)
-        if (wakeMs < 0) return post()
-        val pm = context.getSystemService(PowerManager::class.java)
-        Log.i("Bridge", "debug sample: interactive=${pm.isInteractive}, waking then posting in ${wakeMs}ms")
-        @Suppress("DEPRECATION")
-        val lock = pm.newWakeLock(
-            PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
-            "Bridge:sample-wake",
-        )
-        lock.acquire(3_000)
-        val pending = goAsync()
-        Handler(Looper.getMainLooper()).postDelayed({
-            Log.i("Bridge", "debug sample: interactive=${pm.isInteractive} at post")
-            post()
-            pending.finish()
-        }, wakeMs)
+        BridgeGraph.repository.upsert(n)
+        BridgeGraph.notifier.show(n, alert = true)
     }
 }
