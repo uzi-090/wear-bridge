@@ -53,6 +53,19 @@ struct ContactsView: View {
                 }
                 if sync.enabled {
                     Section {
+                        NavigationLink { WatchContactsView() } label: {
+                            LabeledContent("Contacts on Watch", value: "\(sync.onWatch.count)")
+                        }
+                        Toggle("Add new contacts automatically", isOn: Binding(
+                            get: { sync.selection == .all },
+                            set: { sync.setSelection($0 ? .all : .chosen) }
+                        ))
+                    } footer: {
+                        Text(sync.selection == .all
+                             ? "People you add to your iPhone later also appear on your watch."
+                             : "Only the people you add appear on your watch.")
+                    }
+                    Section {
                         NavigationLink { FavoritesView() } label: {
                             LabeledContent("Favorites", value: "\(sync.favorites.count)")
                         }
@@ -70,12 +83,135 @@ struct ContactsView: View {
     }
 }
 
+/// Exactly who's on the watch. Swipe or Edit to remove; ＋ to add more.
+private struct WatchContactsView: View {
+    @State private var sync = ContactSync.shared
+    @State private var query = ""
+    @State private var selection = Set<String>()
+    @State private var adding = false
+    @Environment(\.editMode) private var editMode
+
+    var body: some View {
+        let list = sync.onWatch.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.phones.contains { $0.contains(query) } }
+        List(selection: $selection) {
+            if sync.onWatch.isEmpty {
+                ContentUnavailableView {
+                    Label("No contacts on your watch", systemImage: "person.crop.circle.badge.plus")
+                } description: {
+                    Text("Add the people you want to see and call from your wrist.")
+                } actions: {
+                    Button("Add Contacts") { adding = true }.buttonStyle(.borderedProminent)
+                }
+            }
+            ForEach(list, id: \.id) { c in
+                ContactRow(contact: c)
+                    .swipeActions {
+                        Button("Remove", role: .destructive) { sync.remove([c.id]) }
+                    }
+            }
+        }
+        .searchable(text: $query, prompt: "Search contacts on watch")
+        .navigationTitle("Contacts on Watch")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { adding = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("Add contacts")
+            }
+            ToolbarItem(placement: .topBarTrailing) { EditButton() }
+            if editMode?.wrappedValue.isEditing == true {
+                ToolbarItem(placement: .bottomBar) {
+                    Button("Remove \(selection.count) from Watch", role: .destructive) {
+                        sync.remove(selection)
+                        selection.removeAll()
+                        editMode?.wrappedValue = .inactive
+                    }
+                    .disabled(selection.isEmpty)
+                }
+            }
+        }
+        .sheet(isPresented: $adding) { AddContactsView() }
+        .task { if sync.available.isEmpty { await sync.refreshAvailable() } }
+    }
+}
+
+/// People not on the watch yet: tick any, then Add.
+private struct AddContactsView: View {
+    @State private var sync = ContactSync.shared
+    @State private var query = ""
+    @State private var picked = Set<String>()
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        let onWatch = Set(sync.onWatch.map(\.id))
+        let list = sync.available.filter { !onWatch.contains($0.id) }
+            .filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) || $0.phones.contains { $0.contains(query) } }
+        NavigationStack {
+            List {
+                if list.isEmpty {
+                    Text(query.isEmpty ? "Everyone is already on your watch." : "No matches.").foregroundStyle(.secondary)
+                }
+                ForEach(list, id: \.id) { c in
+                    let on = picked.contains(c.id)
+                    Button {
+                        if on { picked.remove(c.id) } else { picked.insert(c.id) }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                .font(.title3)
+                                .foregroundStyle(on ? Color.accentColor : .secondary)
+                                .contentTransition(.symbolEffect(.replace))
+                            ContactRow(contact: c)
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .foregroundStyle(.primary)
+                    .accessibilityValue(on ? "Selected" : "")
+                }
+            }
+            .searchable(text: $query, prompt: "Search contacts")
+            .navigationTitle("Add to Watch")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(picked.isEmpty ? "Add" : "Add (\(picked.count))") {
+                        sync.add(picked)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(picked.isEmpty)
+                }
+                ToolbarItem(placement: .bottomBar) {
+                    Button(query.isEmpty ? "Select All" : "Select These") { picked.formUnion(list.map(\.id)) }
+                        .disabled(list.isEmpty)
+                }
+            }
+            .sensoryFeedback(.selection, trigger: picked.count)
+        }
+    }
+}
+
+private struct ContactRow: View {
+    let contact: SyncContact
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(contact.name.isEmpty ? (contact.phones.first ?? "No name") : contact.name)
+            if let phone = contact.phones.first, !contact.name.isEmpty {
+                Text(phone).font(.footnote).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 private struct FavoritesView: View {
     @State private var sync = ContactSync.shared
     @State private var query = ""
 
     var body: some View {
-        let list = sync.available.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
+        // Only people who are on the watch can be favourites there.
+        let list = sync.onWatch.filter { query.isEmpty || $0.name.localizedCaseInsensitiveContains(query) }
         List(list, id: \.id) { c in
             Button { sync.toggleFavorite(c.id) } label: {
                 HStack {

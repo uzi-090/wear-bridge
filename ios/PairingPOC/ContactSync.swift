@@ -26,6 +26,78 @@ final class ContactSync {
         }
     }
 
+    /// Which contacts go to the watch: everyone (minus any removed), or only the ones chosen.
+    enum Selection: String { case all, chosen }
+
+    private(set) var selection = Selection(rawValue: UserDefaults.standard.string(forKey: "contacts.selection") ?? "") ?? .all
+    /// In `.all` mode: contacts removed from the watch. In `.chosen` mode: contacts added to it.
+    private(set) var excluded: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "contacts.excluded") ?? [])
+    private(set) var included: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "contacts.included") ?? [])
+
+    func isOnWatch(_ id: String) -> Bool {
+        selection == .all ? !excluded.contains(id) : included.contains(id)
+    }
+
+    /// The contacts that go to the watch, from everything readable on the iPhone.
+    var onWatch: [SyncContact] { available.filter { isOnWatch($0.id) } }
+
+    /// Switching mode keeps exactly the same people on the watch; it only changes what happens to new contacts.
+    func setSelection(_ s: Selection) {
+        guard s != selection else { return }
+        let current = Set(onWatch.map(\.id))
+        let all = Set(available.map(\.id))
+        if s == .chosen { included = current } else { excluded = all.subtracting(current) }
+        selection = s
+        UserDefaults.standard.set(s.rawValue, forKey: "contacts.selection")
+        saveSelection()
+    }
+
+    /// Adds these contacts to the watch (or removes them), and syncs the difference.
+    func add(_ ids: Set<String>) { save(onWatch: Set(onWatch.map(\.id)).union(ids)) }
+
+    func remove(_ ids: Set<String>) { save(onWatch: Set(onWatch.map(\.id)).subtracting(ids)) }
+
+    /// Add one contact to the watch (true) or remove it (false).
+    func setOnWatch(_ id: String, _ on: Bool) {
+        if selection == .all {
+            if on { excluded.remove(id) } else { excluded.insert(id) }
+        } else {
+            if on { included.insert(id) } else { included.remove(id) }
+        }
+        saveSelection()
+        scheduleSync()
+    }
+
+    /// Saves an edited selection: exactly [onWatch] (contact IDs) goes to the watch, then syncs the difference.
+    func save(onWatch ids: Set<String>) {
+        let all = Set(available.map(\.id))
+        if selection == .all {
+            excluded = all.subtracting(ids)
+        } else {
+            included = ids.intersection(all)
+        }
+        saveSelection()
+        scheduleSync()
+    }
+
+    /// Add or remove every contact matching the current search (or all of them).
+    func setOnWatch(_ ids: [String], _ on: Bool) {
+        for id in ids {
+            if selection == .all {
+                if on { excluded.remove(id) } else { excluded.insert(id) }
+            } else {
+                if on { included.insert(id) } else { included.remove(id) }
+            }
+        }
+        saveSelection()
+        scheduleSync()
+    }
+
+    private func saveSelection() {
+        UserDefaults.standard.set(Array(excluded), forKey: "contacts.excluded")
+        UserDefaults.standard.set(Array(included), forKey: "contacts.included")
+    }
+
     /// iOS has no API for Phone's favourites, so people pick favourites for the watch here.
     private(set) var favorites: Set<String> = Set(UserDefaults.standard.stringArray(forKey: "contacts.favorites") ?? [])
 
@@ -87,7 +159,7 @@ final class ContactSync {
         }
         if generation != lastGeneration || generation == 0 {
             start(full: true)
-        } else if pendingChanges {
+        } else if pendingChanges && !syncing {
             pendingChanges = false
             start(full: false)
         }
@@ -110,9 +182,22 @@ final class ContactSync {
         scheduleSync()
     }
 
+    @ObservationIgnored private var debounce: Task<Void, Never>?
+
+    /// A change on the iPhone (contacts edited, someone added or removed, favourites): sync it soon.
+    /// Taps within a second go out together. If a sync is running or unconfirmed, it runs after the watch
+    /// confirms (see watchReported), so no change is lost.
     private func scheduleSync() {
-        guard enabled, isAuthorized, let link, link.security == .secure, awaitingGeneration == nil else { return }
-        start(full: link.watchStatus?.contactsGeneration != lastGeneration)
+        pendingChanges = true
+        debounce?.cancel()
+        debounce = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self else { return }
+            guard self.enabled, self.isAuthorized, let link = self.link, link.security == .secure,
+                  self.awaitingGeneration == nil, !self.syncing else { return }
+            self.pendingChanges = false
+            self.start(full: link.watchStatus?.contactsGeneration != self.lastGeneration)
+        }
     }
 
     func refreshAvailable() async {
@@ -125,7 +210,7 @@ final class ContactSync {
         guard let link, link.security == .secure else { return }
         progress = 0
         await refreshAvailable()
-        let contacts = available
+        let contacts = onWatch // only the chosen ones; anyone removed is deleted from the watch by the diff
         var newDigests: [String: String] = [:]
         for c in contacts { newDigests[c.id] = Self.digest(c) }
 
