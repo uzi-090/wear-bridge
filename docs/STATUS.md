@@ -7,7 +7,7 @@ _Last updated: 2026-10-05, session 2._
 |---|---|
 | 0 Feasibility docs | ✅ Capability matrix, architecture, risk register, ANCS, protocol, security, call audio, test plan |
 | 1 ANCS PoC | ✅ **Verified on hardware**: pairing, notifications (WhatsApp 64–194 ms, iMessage 113 ms), app name, timestamp |
-| 2 Actions / calls | ✅ Answer (167 ms) / Decline (115 ms) from the watch. **End Call** via undocumented ANCS category 12 (experimental setting, off by default). Call audio stays on the iPhone (expected) |
+| 2 Actions / calls | ✅ Answer (167 ms) / Decline (115 ms) from the watch. **End Call** via undocumented ANCS category 12 (experimental setting, off by default). Call audio stays on the iPhone (expected). **Session 3:** redesigned call screen, watch-only Silence ✔, shake to decline ✔ (real call), bezel to answer (built), "Answering on iPhone…" hand-over, in-call timer, end summary. Silencing the iPhone ringer: NOT POSSIBLE with public APIs |
 | 3 Reconnection | 🟡 App restart ✅, BT toggle ✅. **Not run:** watch reboot, iPhone reboot, out-of-range walk, force-quit iOS app, locked iPhone (TEST_PLAN.md M1) |
 | 4 Watch notification UI | ✅ Logos/icons, filtering, masking, pop-up styles, **conversation grouping, watch-only delete / clear all, opt-in 24 h history, RTL-aware text** (checked on hardware with fake data) |
 | Media (AMS) | ✅ **Verified** with YouTube Music and Apple Music: app icon + brand palette, round layout, play/pause/skip, bezel volume (one click = one iOS step), progress ring |

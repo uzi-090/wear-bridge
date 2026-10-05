@@ -27,6 +27,13 @@ class ShakeDetector(
     private var lastPeakAt = 0L
     private val peaks = ArrayDeque<Long>()
 
+    /** Diagnostics: the strongest linear acceleration since the last read, and peaks in the window. */
+    var maxSinceRead = 0f
+        private set
+    val peaksInWindow: Int get() = peaks.size
+
+    fun readMax(): Float = maxSinceRead.also { maxSinceRead = 0f }
+
     /** Starts (or restarts) detection at [nowMs]. */
     fun reset(nowMs: Long) {
         hasGravity = false
@@ -53,6 +60,7 @@ class ShakeDetector(
         if (nowMs < quietUntil) return false
 
         val magnitude = sqrt(lx * lx + ly * ly + lz * lz)
+        if (magnitude > maxSinceRead) maxSinceRead = magnitude
         if (magnitude < thresholdMs2) return false
         val dominant = when {
             abs(lx) >= abs(ly) && abs(lx) >= abs(lz) -> lx

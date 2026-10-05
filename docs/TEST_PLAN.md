@@ -82,6 +82,11 @@ locked iPhone and iMessage are unverified. Run them before any release build.
 | M2.14 | iPhone → Contacts → Allow → Sync on | Contacts appear on the watch, sealed; one full sync, then incremental | **✔ 2026-10-05:** 957 contacts committed. Found + fixed: two status pushes started repeated full syncs | ✔ |
 | M2.15 | Watch → Contacts → a number → Call from iPhone | iPhone offers the call | **✔ 2026-10-05:** iPhone log `event: call request` (21:21:12, sealed event decrypted); user confirmed iOS showed its call prompt | ✔ |
 | M2.16 | Now playing with YouTube Music and Apple Music | Right app icon/name/colours, title, artist, progress, time | **✔** after fixes: explicit AMS reads (iOS skipped current values), duration re-read per track, ring no longer frozen; YouTube Music's App Store icon fetched by the iPhone (4.7 KB) | ✔ |
+| M3.1 | Real call: tap Silence | Watch stops vibrating, iPhone keeps ringing | **✔ 2026-10-05:** `call: silenced on watch`; the user then declined | ✔ |
+| M3.2 | Real call: shake | Declined | **✔ 2026-10-06:** shake peaks 56.7 / 50.9 m/s², `declined by shake`, ANCS negative action success. (A first attempt didn't fire; telemetry with a fake call showed the user's shake at 42–74 m/s², well above the 14 m/s² threshold) | ✔ |
+| M3.3 | Real call: bezel 3 clicks clockwise | "Answering on iPhone…", then the in-call timer | Not run | ⏸ |
+| M3.4 | Fake call (demo): ringing, connected, ended layouts | Fit the round screen; summary closes itself | **✔** screenshots after one layout pass (Answer button and hint had been clipped) | ✔ |
+| M3.5 | Link with MTU 517 | Notifications and calls keep working | **✔ after fix:** a 514-byte chunk made Android throw and stopped the link's message loop (no calls reached the watch). Payload capped at 512, loop made exception-proof | ✔ |
 | M2.12 | Onboarding on a fresh install | Bluetooth prompt only after step 2, live ✓ on step 4 | Not run | ⏸ |
 
 ## Later phases (integration matrix)

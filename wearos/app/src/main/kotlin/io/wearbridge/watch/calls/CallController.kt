@@ -217,9 +217,20 @@ class CallController(private val context: Context) {
         }
     }
 
+    private val debuggable = context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0
+    private var lastStatsAt = 0L
+
     private val sensorListener = object : SensorEventListener {
         override fun onSensorChanged(e: SensorEvent) {
-            if (!shake.feed(e.values[0], e.values[1], e.values[2], e.timestamp / 1_000_000)) return
+            val now = e.timestamp / 1_000_000
+            val fired = shake.feed(e.values[0], e.values[1], e.values[2], now)
+            // Debug builds: a line every 250 ms to tune the detector against real wrists (movement only).
+            if (debuggable && now - lastStatsAt >= 250) {
+                lastStatsAt = now
+                val max = shake.readMax()
+                if (max >= 5f) DiagLog.i("shake max=%.1f peaks=%d".format(max, shake.peaksInWindow))
+            }
+            if (!fired) return
             scope.launch { onShake() }
         }
 
