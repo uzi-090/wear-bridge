@@ -70,7 +70,6 @@ dependencies {
     debugImplementation(libs.compose.ui.tooling)
     implementation(libs.wear.compose.material3)
     implementation(libs.wear.compose.foundation)
-    implementation(libs.wear.compose.navigation)
 
     // Tile (swipe from the watch face): Material 3 Expressive tile layouts.
     implementation(libs.wear.tiles)

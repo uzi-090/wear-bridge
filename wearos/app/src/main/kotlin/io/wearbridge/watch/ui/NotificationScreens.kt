@@ -16,7 +16,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -26,6 +25,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.material3.AlertDialog
@@ -149,7 +150,7 @@ private fun ThreadCard(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
             transformation = transformation,
             // Cleared-on-iPhone history is dimmed; "Cleared" is also said in words, so it isn't colour-only.
-            modifier = Modifier.fillMaxWidth().alpha(if (thread.items.all { it.clearedOnPhone }) 0.62f else 1f),
+            modifier = Modifier.fillMaxWidth().dimmed(thread.items.all { it.clearedOnPhone }),
         ) {
             // Sender (or chat) first, then the message: the order people read a conversation in.
             if (!n.masked && n.ancs.title.isNotBlank()) {
@@ -190,6 +191,16 @@ private fun delete(thread: NotificationThread, haptics: androidx.compose.ui.hapt
     thread.items.forEach { BridgeGraph.delete(it.uid) }
 }
 
+/**
+ * Fades cleared history. Alpha is applied per draw (no offscreen buffer): Modifier.alpha renders each card
+ * into its own layer every frame, which the Watch4's GPU felt in long lists and transitions.
+ */
+private fun Modifier.dimmed(dim: Boolean): Modifier =
+    if (!dim) this else graphicsLayer {
+        alpha = 0.62f
+        compositingStrategy = CompositingStrategy.ModulateAlpha
+    }
+
 /** Every notification in one conversation, newest first. [anchorUid] is any notification in it. */
 @Composable
 fun ThreadScreen(anchorUid: Long, onOpen: (Long) -> Unit) {
@@ -222,7 +233,7 @@ fun ThreadScreen(anchorUid: Long, onOpen: (Long) -> Unit) {
         items(thread, key = { it.uid }) { n ->
             Card(
                 onClick = { onOpen(n.uid) },
-                modifier = morph(spec).alpha(if (n.clearedOnPhone) 0.62f else 1f),
+                modifier = morph(spec).dimmed(n.clearedOnPhone),
                 transformation = surface(spec),
                 shape = RoundedCornerShape(24.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),

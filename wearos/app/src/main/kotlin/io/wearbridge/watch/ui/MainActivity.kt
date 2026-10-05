@@ -12,9 +12,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.navigation.SwipeDismissableNavHost
-import androidx.wear.compose.navigation.composable
-import androidx.wear.compose.navigation.rememberSwipeDismissableNavController
 import io.wearbridge.watch.BridgePermissions
 import io.wearbridge.watch.service.BridgeService
 
@@ -88,7 +85,7 @@ private fun WatchApp(
     onDebugRouteConsumed: () -> Unit,
     onRequestPermissions: () -> Unit,
 ) {
-    val nav = rememberSwipeDismissableNavController()
+    val nav = rememberBridgeNavigator("home")
     LaunchedEffect(deepLinkUid) {
         if (deepLinkUid != null) {
             nav.navigate("notification/$deepLinkUid")
@@ -102,9 +99,10 @@ private fun WatchApp(
         }
     }
     AppScaffold {
-        SwipeDismissableNavHost(navController = nav, startDestination = "home") {
-            composable("home") {
-                HomeScreen(
+        BridgeNavHost(nav) { route ->
+            val arg = route.substringAfter('/', "")
+            when (route.substringBefore('/')) {
+                "home" -> HomeScreen(
                     hasPermissions = hasPermissions,
                     onRequestPermissions = onRequestPermissions,
                     onOpenNotifications = { nav.navigate("notifications") },
@@ -113,31 +111,19 @@ private fun WatchApp(
                     onOpenContacts = { nav.navigate("contacts") },
                     onOpenSettings = { nav.navigate("settings") },
                 )
-            }
-            composable("settings") { SettingsScreen(onOpenDiagnostics = { nav.navigate("diagnostics") }) }
-            composable("media") { MediaScreen() }
-            composable("contacts") {
-                io.wearbridge.watch.contacts.ContactsScreen(onOpen = { id -> nav.navigate("contact/" + android.net.Uri.encode(id)) })
-            }
-            composable("contact/{id}") { entry ->
-                io.wearbridge.watch.contacts.ContactDetailScreen(entry.arguments?.getString("id").orEmpty())
-            }
-            composable("find") { io.wearbridge.watch.find.FindPhoneScreen() }
-            composable("notifications") {
-                NotificationListScreen(
+                "settings" -> SettingsScreen(onOpenDiagnostics = { nav.navigate("diagnostics") })
+                "media" -> MediaScreen()
+                "contacts" -> io.wearbridge.watch.contacts.ContactsScreen(onOpen = { id -> nav.navigate("contact/" + android.net.Uri.encode(id)) })
+                "contact" -> io.wearbridge.watch.contacts.ContactDetailScreen(android.net.Uri.decode(arg))
+                "find" -> io.wearbridge.watch.find.FindPhoneScreen()
+                "notifications" -> NotificationListScreen(
                     onOpen = { uid -> nav.navigate("notification/$uid") },
                     onOpenThread = { uid -> nav.navigate("thread/$uid") },
                 )
+                "thread" -> ThreadScreen(arg.toLongOrNull() ?: -1L, onOpen = { nav.navigate("notification/$it") })
+                "notification" -> NotificationDetailScreen(arg.toLongOrNull() ?: -1L, onDeleted = { nav.popBackStack() })
+                "diagnostics" -> DiagnosticsScreen()
             }
-            composable("thread/{uid}") { entry ->
-                val uid = entry.arguments?.getString("uid")?.toLongOrNull() ?: -1L
-                ThreadScreen(uid, onOpen = { nav.navigate("notification/$it") })
-            }
-            composable("notification/{uid}") { entry ->
-                val uid = entry.arguments?.getString("uid")?.toLongOrNull() ?: -1L
-                NotificationDetailScreen(uid, onDeleted = { nav.popBackStack() })
-            }
-            composable("diagnostics") { DiagnosticsScreen() }
         }
     }
 }

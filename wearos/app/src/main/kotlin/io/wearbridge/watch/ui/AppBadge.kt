@@ -16,9 +16,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.Image
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.wearbridge.watch.BridgeGraph
@@ -30,13 +28,13 @@ import io.wearbridge.watch.notifications.AppInfo
 @Composable
 fun AppBadge(app: AppInfo, modifier: Modifier = Modifier, size: Dp = 20.dp) {
     val iconVersion by BridgeGraph.icons.version.collectAsStateWithLifecycle()
-    val storeIcon = remember(app.bundleId, iconVersion) { BridgeGraph.icons.bitmap(app.bundleId)?.asImageBitmap() }
+    // Pre-cropped and small (see AppIconStore.circle), so no per-frame clip or large texture.
+    val storeIcon = remember(app.bundleId, iconVersion) { BridgeGraph.icons.circle(app.bundleId)?.asImageBitmap() }
     if (storeIcon != null) {
         Image(
             storeIcon,
             contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = modifier.size(size).clip(CircleShape).clearAndSetSemantics { },
+            modifier = modifier.size(size).clearAndSetSemantics { },
         )
         return
     }

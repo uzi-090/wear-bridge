@@ -23,6 +23,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -198,13 +200,21 @@ private fun StatusLine(link: LinkSnapshot, modifier: Modifier) {
     val context = LocalContext.current
     val reduceMotion = remember { Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
     // Two gentle pulses when the link comes up, then still: an endless animation would redraw the
-    // screen every frame (jank, and battery on a watch). Animated in the draw layer only.
+    // screen every frame (jank, and battery on a watch). Once per connection, not every time Home is
+    // shown again (that kept the screen redrawing for ~2 s after each back). Animated in the draw layer.
     val pulse = remember { androidx.compose.animation.core.Animatable(1f) }
+    var pulsed by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     androidx.compose.runtime.LaunchedEffect(ok) {
-        if (ok && !reduceMotion) repeat(2) {
-            pulse.animateTo(0.35f, tween(450))
-            pulse.animateTo(1f, tween(450))
-        } else pulse.snapTo(1f)
+        if (!ok) {
+            pulsed = false
+            pulse.snapTo(1f)
+        } else if (!pulsed && !reduceMotion) {
+            pulsed = true
+            repeat(2) {
+                pulse.animateTo(0.35f, tween(450))
+                pulse.animateTo(1f, tween(450))
+            }
+        }
     }
     Row(
         horizontalArrangement = Arrangement.Center,
@@ -212,7 +222,10 @@ private fun StatusLine(link: LinkSnapshot, modifier: Modifier) {
         modifier = modifier.padding(top = 4.dp, bottom = 2.dp).clearAndSetSemantics { contentDescription = "Status: $headline" },
     ) {
         Box(
-            Modifier.size(8.dp).graphicsLayer { alpha = pulse.value }
+            Modifier.size(8.dp).graphicsLayer {
+                alpha = pulse.value
+                compositingStrategy = androidx.compose.ui.graphics.CompositingStrategy.ModulateAlpha // one shape: no offscreen layer
+            }
                 .then(if (ok) Modifier.background(color, CircleShape) else Modifier.border(2.dp, color, CircleShape)),
         )
         Spacer(Modifier.width(6.dp))
