@@ -55,16 +55,28 @@
 wearos/
   ancs/            Pure Kotlin/JVM. No Android dependency. Unit-tested.
     AncsConstants, NotificationSourceEvent, AncsCommands (request encoders),
-    DataSourceReassembler (fragmented response parser), AncsDate
+    DataSourceReassembler (fragmented responses), AncsSession (request queue, priorities,
+    timeouts, actions), AncsNotification / AncsDate
   app/
-    ble/           BridgePeripheral (advertiser + GATT server), GattOpQueue,
-                   ConnectionStateMachine, BluetoothStateReceiver
-    ancs/          AncsClient (drives the protocol on a BluetoothGatt)
-    notifications/ NotificationRepository (StateFlow), WatchNotification model, haptics
-    service/       BridgeService (foreground), BootReceiver
-    diagnostics/   Redact, DiagLog (ring buffer, redacted)
-    ui/            Compose for Wear OS: Home, Notification list/detail, IncomingCall
+    ble/           ConnectionStateMachine (pure, unit-tested)
+                   ConnectionManager   – orchestrator: runs state-machine effects, single inbox
+                   BridgePeripheral    – advertising + bridge GATT server
+                   GattSession         – GATT client to iOS, GattOpQueue, callbacks
+                   PairingManager      – LE bonding + timeout
+                   ReconnectionManager – the single pending retry timer
+    ancs/          AncsClient – drives AncsSession over a BluetoothGatt
+    notifications/ NotificationEngine (policy: reconnect grace, coalescing, quota, action gating),
+                   NotificationRepository (StateFlows), MirrorNotifier (native Wear OS notifications)
+    settings/      BridgeSettings (subtle pop-ups, experimental End Call)
+    service/       BridgeService (foreground, connectedDevice), BootReceiver
+    diagnostics/   DiagLog (redacted ring buffer), Redact
+    ui/            Compose for Wear OS: Home, Notifications, Call surface, Settings, Diagnostics
 ```
+
+Mapping to the spec's suggested names: the watch is the LE *peripheral*, so there's no DeviceScanner.
+BluetoothManager is the system receivers in ConnectionManager. BlePacketCodec / TransportProtocol
+arrive with the custom protocol (Phase 6/10). NotificationRenderer = MirrorNotifier.
+NotificationFilter / Policy / IconResolver / History are Phase 4.
 
 **Threading:** every Bluetooth callback just posts an event into a single-threaded coroutine
 dispatcher (`BridgeService.bleScope`, `limitedParallelism(1)`). That keeps state mutation serialized
