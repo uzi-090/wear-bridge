@@ -32,7 +32,7 @@
 | M1.3 | Confirm the pairing codes on both devices | Watch: `bond state 11 → 12`, `link … → DISCOVERING_SERVICES` | Attempts 1–2 **failed**: LESC numeric comparison and encryption succeeded, then the iPhone sent SMP *Pairing Failed* about 90 ms after the watch's identity keys, and the watch timed out after 30 s. Attempt 3, after **Forget This Device** on the iPhone and toggling the watch's Bluetooth, **succeeded** with `sec_level 0x2` (authenticated). The root cause isn't proven (no snoop log for the failures). Likely a stale half-bond | ✔ (with workaround) |
 | M1.4 | Watch log shows `ancs=true` and `ancs subscribed`, and the watch shows **Connected** | READY | ✔ READY 8 s after first contact. ANCS is visible in discovery **even before bonding** (9 services) | ✔ |
 | M1.5 | If `ancs=false`: iPhone Settings → Bluetooth → ⓘ → **Share System Notifications** on | ANCS appears, then READY | | |
-| M1.6 | Send yourself an iMessage | Watch notification with **app, title, body, time**. Log `latency=…ms` | (pending iMessage) | |
+| M1.6 | Send yourself an iMessage | Watch notification with **app, title, body, time**. Log `latency=…ms` | **Not run** (2026-10-05: the user chose to proceed to Phase 4; logs showed no evidence of this test) | ⏸ |
 | M1.7 | Send a WhatsApp message (1:1 and group) | As above. Record which action labels iOS exposes | 1:1 ✔: 3 messages at **194 / 73 / 98 ms**. App name `WhatsApp` came via Get App Attributes. Timestamp from iOS. **Only action: negative "Clear"** (no reply / mark-read). Group: pending | ✔ (1:1) |
 | M1.8 | Clear the notification on the iPhone | Disappears from the watch | | |
 | M1.9 | Tap the iOS-labelled negative action (e.g. "Clear") on the watch | Removed on the iPhone | | |
@@ -41,18 +41,21 @@
 | M1.12 | Call again, tap the label iOS gives for answering | The call is answered on the iPhone. **Record where the audio goes** | **✔ 2026-10-05:** tapped Answer on the watch, the ANCS positive action succeeded in **167 ms**, and the call connected. **Audio stayed on the iPhone** (as predicted: control ≠ audio). Answering on the iPhone removed the watch's call notification at the same moment | ✔ |
 | M1.12b | Answer on the watch, then tap the in-call button | iOS's active-call action ends the call | **✔ 2026-10-05:** Answer opened the in-call screen (Category 12, label **"End Call"**). Tapping it: the action succeeded and iOS removed the active call 76 ms later, so the call ended | ✔ |
 | M1.13 | Missed call | MissedCall notification. Record its labels | ✔ After the decline, iOS posted MissedCall (Category 2) with labels **"Dial" / "Clear"** | ✔ |
-| M1.14 | iPhone locked vs unlocked, for M1.6 | Record any difference in content (the *Show Previews* setting) | | |
-| M1.15 | Force-quit PairingPOC, then repeat M1.6 | Still works (ANCS doesn't need the app) | | |
-| M1.16 | Walk out of range for 1 minute and back | `RECONNECTING` → READY, **no buzz** for old notifications | App-restart variant ✔: the iPhone reconnected 0.23 s after advertising began, READY in 3.2–4.7 s. 16 replayed notifications were stored silently. **Found:** the replay costs about 0.6 s per notification (serial fetch), so new messages now jump the backlog (fix 2bcc283). Out-of-range walk: pending | partial |
+| M1.14 | iPhone locked vs unlocked, for M1.6 | Record any difference in content (the *Show Previews* setting) | **Not run** (2026-10-05: the user chose to proceed to Phase 4; logs showed no evidence of this test) | ⏸ |
+| M1.15 | Force-quit PairingPOC, then repeat M1.6 | Still works (ANCS doesn't need the app) | **Not run** (2026-10-05: the user chose to proceed to Phase 4; logs showed no evidence of this test) | ⏸ |
+| M1.16 | Walk out of range for 1 minute and back | `RECONNECTING` → READY, **no buzz** for old notifications | App-restart variant ✔: the iPhone reconnected 0.23 s after advertising began, READY in 3.2–4.7 s. 16 replayed notifications were stored silently. **Found:** the replay costs about 0.6 s per notification (serial fetch), so new messages now jump the backlog (fix 2bcc283). Out-of-range walk: **not run** | partial |
 | M1.17 | Toggle watch Bluetooth off/on | "Bluetooth is off" → reconnects | **✔ 2026-10-05 (after fix 9e3abae):** BT on → advertising in 0.2 s → iPhone reconnected after 7.2 s → **READY 10.8 s** after BT on. 5 WhatsApp messages afterwards in 85–193 ms. (The first attempt got stuck "Reconnecting": a stale device reference, now fixed) | ✔ |
-| M1.18 | Reboot the watch | The service restarts from boot and reconnects | | |
-| M1.19 | Reboot the iPhone (unlock once) | Reconnects. Record the time to READY | | |
+| M1.18 | Reboot the watch | The service restarts from boot and reconnects | **Not run** (2026-10-05: the user chose to proceed to Phase 4; logs showed no evidence of this test) | ⏸ |
+| M1.19 | Reboot the iPhone (unlock once) | Reconnects. Record the time to READY | **Not run** (2026-10-05: the user chose to proceed to Phase 4; logs showed no evidence of this test) | ⏸ |
 
 Record firmware: One UI Watch version, Wear OS version, watch security patch, iOS version.
 
 **Test rig (2026-10-05):** Galaxy Watch4 Classic LTE (SM-R895F), Android 16 / API 36 (Wear OS 6, One UI 8 Watch), security patch 2026-08-05. iPhone 16 Pro (iOS version: TBD).
 
 **Watch-side verified:** app installs, `connectedDevice` FGS runs, bridge GATT service is registered (`status=0`), LE advertising starts with solicitation (`dumpsys bluetooth_manager`: connectable legacy set, interval 1600 × 0.625 ms).
+
+**Open risk carried into Phase 4:** watch reboot, iPhone reboot, out-of-range, force-quit iOS app,
+locked iPhone and iMessage are unverified. Run them before any release build.
 
 ## Later phases (integration matrix)
 iPhone locked/unlocked × iOS app foreground/background/force-quit × watch screen on/off/charging ×
