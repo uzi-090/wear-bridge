@@ -7,6 +7,8 @@ object BridgeUuids {
     val SERVICE: UUID = UUID.fromString("9C664C93-19F2-435D-895A-A40751731AE1")
     val PAIRING: UUID = characteristic(0x0001)
     val CONTROL: UUID = characteristic(0x0002)
+    /** iPhone → watch contact sync (sealed batches). */
+    val CONTACTS: UUID = characteristic(0x0004)
     /** Watch → iPhone events (Find iPhone). */
     val EVENTS: UUID = characteristic(0x0003)
     /** Watch → iPhone status (battery, charging, link). */
@@ -30,6 +32,7 @@ object BridgeUuids {
     const val CAP_PREFS = 1 shl 5
     /** Bridge messages are sealed with app-level keys (the watch's public key follows the capabilities). */
     const val CAP_SECURE = 1 shl 6
+    const val CAP_CONTACTS = 1 shl 7
 
     private fun characteristic(index: Int): UUID =
         UUID.fromString("9C664C93-19F2-435D-%04X-A40751731AE1".format(index))

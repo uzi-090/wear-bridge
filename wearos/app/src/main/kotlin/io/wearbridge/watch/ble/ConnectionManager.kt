@@ -25,6 +25,8 @@ import io.wearbridge.watch.bridge.DeviceChannel
 import io.wearbridge.watch.bridge.SettingsChannel
 import io.wearbridge.watch.bridge.WatchBattery
 import io.wearbridge.watch.find.FindPhoneState
+import io.wearbridge.watch.contacts.CallRequestState
+import io.wearbridge.watch.contacts.ContactsChannel
 import io.wearbridge.watch.security.SecureLink
 import io.wearbridge.watch.diagnostics.DiagLog
 import io.wearbridge.watch.diagnostics.Redact
@@ -75,6 +77,7 @@ class ConnectionManager(
     }
     private val settingsChannel: SettingsChannel = SettingsChannel(peripheral, secureLink, BridgeGraph.policy, BridgeGraph.icons, BridgeGraph.settings, scope)
     private val deviceChannel: DeviceChannel = DeviceChannel(peripheral, secureLink, scope, appVersion(context))
+    private val contactsChannel = ContactsChannel(secureLink, BridgeGraph.contacts)
     private var findPhoneTimeout: Job? = null
 
     private var device: BluetoothDevice? = null
@@ -99,6 +102,8 @@ class ConnectionManager(
         data class FindPhone(val ring: Boolean) : Msg
         data class Event(val type: Int, val payload: ByteArray) : Msg
         data class AuthChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
+        data class ContactsChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
+        data class CallRequest(val phone: String, val name: String) : Msg
         data class Approve(val allow: Boolean) : Msg
         data class Media(val command: RemoteCommand) : Msg
         data object Shutdown : Msg
@@ -135,6 +140,8 @@ class ConnectionManager(
 
     fun approveIphoneApp(allow: Boolean) = post(Msg.Approve(allow))
 
+    fun callFromIphone(phone: String, name: String) = post(Msg.CallRequest(phone, name))
+
     private fun post(msg: Msg) {
         inbox.trySend(msg)
     }
@@ -163,6 +170,7 @@ class ConnectionManager(
             }
             is Msg.CentralDisconnected -> {
                 secureLink.onDisconnected(msg.device)
+                contactsChannel.onDisconnected(msg.device)
                 settingsChannel.onDisconnected(msg.device)
                 deviceChannel.onDisconnected(msg.device)
                 if (msg.device.address == device?.address) {
@@ -177,6 +185,12 @@ class ConnectionManager(
                 else -> deviceChannel.onSubscription(msg.device, msg.characteristic, msg.subscribed)
             }
             is Msg.AuthChunk -> secureLink.onAuthChunk(msg.device, msg.value)
+            is Msg.ContactsChunk -> contactsChannel.onChunk(msg.device, msg.value)
+            is Msg.CallRequest -> {
+                val sent = deviceChannel.sendEvent(BridgeMessageType.CALL_REQUEST, BridgeCodec.encodeCallRequest(msg.phone, msg.name))
+                BridgeGraph.callRequestFlow.value = if (sent) CallRequestState.SENT else CallRequestState.NO_APP
+                DiagLog.i("call request sent=$sent")
+            }
             is Msg.Approve -> secureLink.approve(msg.allow)
             is Msg.ControlChunk -> deviceChannel.onControlChunk(msg.device, msg.value)
             is Msg.Event -> deviceChannel.sendEvent(msg.type, msg.payload)
@@ -417,6 +431,7 @@ class ConnectionManager(
             post(Msg.Link(LinkEvent.AdvertisingFailed(unsupported)))
         override fun onControlWrite(device: BluetoothDevice, value: ByteArray) = post(Msg.ControlChunk(device, value))
         override fun onAuthChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.AuthChunk(device, value))
+        override fun onContactsChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.ContactsChunk(device, value))
         override fun onSettingsChunk(device: BluetoothDevice, value: ByteArray) = post(Msg.SettingsChunk(device, value))
         override fun onSubscription(device: BluetoothDevice, characteristic: UUID, subscribed: Boolean) =
             post(Msg.Subscription(device, characteristic, subscribed))

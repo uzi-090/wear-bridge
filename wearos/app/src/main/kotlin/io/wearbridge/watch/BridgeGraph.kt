@@ -13,6 +13,8 @@ import io.wearbridge.watch.ble.ConnectionManager
 import io.wearbridge.watch.bridge.WatchBattery
 import io.wearbridge.watch.find.FindPhoneState
 import io.wearbridge.watch.find.FindWatchAlert
+import io.wearbridge.watch.contacts.CallRequestState
+import io.wearbridge.watch.contacts.ContactsStore
 import io.wearbridge.watch.security.ApprovalNotifier
 import io.wearbridge.watch.security.IdentityStore
 import io.wearbridge.watch.ble.LinkSnapshot
@@ -48,6 +50,11 @@ object BridgeGraph {
         private set
     lateinit var identity: IdentityStore
         private set
+    lateinit var contacts: ContactsStore
+        private set
+
+    internal val callRequestFlow = MutableStateFlow(CallRequestState.IDLE)
+    val callRequest: StateFlow<CallRequestState> = callRequestFlow
 
     /** The 6-digit code while a new iPhone app waits for the user to allow it on the watch. */
     internal val pendingApprovalFlow = MutableStateFlow<String?>(null)
@@ -101,6 +108,7 @@ object BridgeGraph {
         notifier = MirrorNotifier(app, settings).also { it.createChannels() }
         findWatch = FindWatchAlert(app).also { it.createChannel() }
         identity = IdentityStore(app)
+        contacts = ContactsStore(app)
         approvals = ApprovalNotifier(app).also { it.createChannel() }
     }
 
@@ -141,6 +149,12 @@ object BridgeGraph {
     fun forgetIphoneApps() {
         identity.forgetAll()
         controller?.reconnect()
+    }
+
+    /** Asks the iPhone app to offer this call. The user confirms on the iPhone (iOS doesn't let apps dial silently). */
+    fun callFromIphone(phone: String, name: String) {
+        val c = controller
+        if (c == null) callRequestFlow.value = CallRequestState.NO_APP else c.callFromIphone(phone, name)
     }
 
     /** Rings the iPhone (best effort: needs the iPhone app alive in the background). */

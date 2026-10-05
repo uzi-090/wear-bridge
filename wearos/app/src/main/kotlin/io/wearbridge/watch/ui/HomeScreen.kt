@@ -48,6 +48,7 @@ fun HomeScreen(
     onOpenNotifications: () -> Unit,
     onOpenMedia: () -> Unit,
     onOpenFindPhone: () -> Unit,
+    onOpenContacts: () -> Unit,
     onOpenDiagnostics: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -150,6 +151,15 @@ fun HomeScreen(
                         )
                     },
                     icon = { androidx.wear.compose.material3.Icon(androidx.compose.ui.res.painterResource(io.wearbridge.watch.R.drawable.ic_music_note), contentDescription = null) },
+                )
+            }
+            item {
+                val count by BridgeGraph.contacts.contacts.collectAsStateWithLifecycle()
+                FilledTonalButton(
+                    onClick = onOpenContacts,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Contacts") },
+                    secondaryLabel = { Text(if (count.isEmpty()) "Sync from iPhone" else "${count.size}") },
                 )
             }
             item {

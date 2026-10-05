@@ -46,7 +46,9 @@ class DeviceChannel(
 
     init {
         scope.launch {
-            combine(BridgeGraph.watchBattery, BridgeGraph.link, BridgeGraph.media, BridgeGraph.repository.items) { b, l, m, items ->
+            combine(
+                BridgeGraph.watchBattery, BridgeGraph.link, BridgeGraph.media, BridgeGraph.repository.items, BridgeGraph.contacts.generation,
+            ) { b, l, m, items, _ ->
                 status(b, l.state == LinkState.READY, m != null, items.size)
             }.distinctUntilChanged().collect { schedulePush() }
         }
@@ -146,6 +148,8 @@ class DeviceChannel(
         model = Build.MODEL,
         osVersion = Build.VERSION.RELEASE,
         appVersion = appVersion,
+        contactsGeneration = BridgeGraph.contacts.generation.value,
+        contactCount = BridgeGraph.contacts.contacts.value.size,
     )
 
     private companion object {

@@ -45,9 +45,26 @@ class SampleNotificationReceiver : BroadcastReceiver() {
             io.wearbridge.ams.RemoteCommand.entries.firstOrNull { it.name == name }?.let(BridgeGraph::mediaCommand)
             return
         }
+        // `--ez fake_contacts true` (demo mode only): replaces the watch's contacts with fake ones. Restart to
+        // leave demo mode; the iPhone then sees a generation mismatch and resyncs the real contacts.
+        if (intent.getBooleanExtra("fake_contacts", false) && BridgeGraph.demoMode) {
+            val fake = listOf(
+                io.wearbridge.protocol.Contact("f1", "Alex Sample", listOf("+15550100001"), listOf("alex@example.com"), favorite = true),
+                io.wearbridge.protocol.Contact("f2", "Blair Test", listOf("+15550100002", "+15550100003"), emptyList(), favorite = false),
+                io.wearbridge.protocol.Contact("f3", "Casey Demo", listOf("+15550100004"), emptyList(), favorite = true),
+                io.wearbridge.protocol.Contact("f4", "مثال تجريبي", listOf("+15550100005"), emptyList(), favorite = false),
+                io.wearbridge.protocol.Contact("f5", "Drew Placeholder", emptyList(), listOf("drew@example.com"), favorite = false),
+            )
+            BridgeGraph.contacts.commit(fake.associateBy { it.id }, generation = io.wearbridge.watch.contacts.ContactsStore.DEMO_GENERATION)
+            return
+        }
+        if (intent.getBooleanExtra("clear_contacts", false)) {
+            BridgeGraph.contacts.clear()
+            return
+        }
         if (intent.getBooleanExtra("fake_media", false) && BridgeGraph.demoMode) {
             BridgeGraph.mediaFlow.value = io.wearbridge.ams.NowPlaying(
-                playerName = "Music", state = io.wearbridge.ams.PlaybackState.PLAYING, rate = 1.0,
+                playerName = intent.getStringExtra("player") ?: "Music", state = io.wearbridge.ams.PlaybackState.PLAYING, rate = 1.0,
                 elapsedSeconds = 74.0, elapsedAtMillis = android.os.SystemClock.elapsedRealtime(),
                 title = "Sample Track Title", artist = "Demo Artist", durationSeconds = 215.0, volume = 0.6f,
             )

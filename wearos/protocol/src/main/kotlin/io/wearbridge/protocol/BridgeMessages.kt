@@ -18,6 +18,8 @@ object BridgeMessageType {
     const val FIND_PHONE = 0x90
     /** empty: the user dismissed "Find watch" on the watch. */
     const val FIND_WATCH_STOPPED = 0x91
+    /** str phone, str name: "Call from iPhone". The iPhone app offers the call; the user confirms there. */
+    const val CALL_REQUEST = 0x92
 
     // DEVICE_STATUS, watch → iOS
     const val STATUS = 0xA0
@@ -36,6 +38,9 @@ data class WatchStatus(
     val model: String,
     val osVersion: String,
     val appVersion: String,
+    /** Last contacts sync the watch committed (0 = none). Trailer added in v1.2. */
+    val contactsGeneration: Long = 0,
+    val contactCount: Int = 0,
 )
 
 object BridgeCodec {
@@ -46,6 +51,8 @@ object BridgeCodec {
         str(s.model)
         str(s.osVersion)
         str(s.appVersion)
+        u32(s.contactsGeneration)
+        u16(s.contactCount.coerceIn(0, 0xFFFF))
     }.bytes()
 
     fun decodeStatus(bytes: ByteArray): WatchStatus {
@@ -61,7 +68,14 @@ object BridgeCodec {
             model = r.str(),
             osVersion = r.str(),
             appVersion = r.str(),
-        )
+        ).let { if (r.remaining >= 6) it.copy(contactsGeneration = r.u32(), contactCount = r.u16()) else it }
+    }
+
+    fun encodeCallRequest(phone: String, name: String): ByteArray = Bytes.Writer().apply { str(phone); str(name) }.bytes()
+
+    fun decodeCallRequest(bytes: ByteArray): Pair<String, String> {
+        val r = Bytes.Reader(bytes)
+        return r.str() to r.str()
     }
 
     fun encodeSwitch(on: Boolean): ByteArray = byteArrayOf(if (on) 1 else 0)
@@ -91,6 +105,7 @@ internal object Bytes {
 
     class Reader(private val b: ByteArray) {
         private var p = 0
+        val remaining: Int get() = b.size - p
         fun u8(): Int {
             require(p < b.size) { "truncated" }
             return b[p++].toInt() and 0xFF

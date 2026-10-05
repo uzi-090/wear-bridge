@@ -1,6 +1,8 @@
 package io.wearbridge.watch.ui
 
 import android.os.SystemClock
+import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,12 +14,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -25,13 +29,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.rotary.onRotaryScrollEvent
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDirection
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,29 +49,35 @@ import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.FilledIconButton
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.IconButton
+import androidx.wear.compose.material3.IconButtonDefaults
 import androidx.wear.compose.material3.LevelIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ProgressIndicatorDefaults
 import androidx.wear.compose.material3.ScreenScaffold
-import androidx.wear.compose.material3.Stepper
-import androidx.wear.compose.material3.StepperLevelIndicator
 import androidx.wear.compose.material3.Text
 import io.wearbridge.ams.NowPlaying
 import io.wearbridge.ams.RemoteCommand
 import io.wearbridge.watch.BridgeGraph
 import io.wearbridge.watch.R
 import io.wearbridge.watch.ble.LinkState
+import io.wearbridge.watch.notifications.AppCatalog
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
- * Now Playing on the iPhone, over Apple Media Service: works with any app iOS shows in its Now Playing
- * controls (Apple Music, Spotify, podcasts, YouTube…). Laid out like the Wear OS media player: track
- * info on top, transport controls in the middle with progress around play/pause, a volume button at the
- * bottom, and the bezel or crown changes the iPhone's volume with the level shown on the screen edge.
+ * Now Playing on the iPhone, over Apple Media Service: any app iOS shows in its Now Playing controls
+ * (Apple Music, Spotify, podcasts, YouTube…).
+ *
+ * Layout for a round screen, top to bottom on one centre line: the playing app's logo and name, the
+ * title (scrolls if long) and artist, then previous / play-pause / next with the track progress as a
+ * ring around play-pause, then elapsed and total time. The palette comes from the playing app's brand
+ * colour: a faint glow behind the content (mostly black, so OLED-friendly), and the accent for the ring
+ * and play button. Volume is the bezel (or crown) only: one click = one iOS volume step, with the level
+ * on the screen edge and in words at the bottom while it changes.
  */
 @Composable
-fun MediaScreen(onOpenVolume: () -> Unit) {
+fun MediaScreen() {
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val np = media
@@ -73,16 +87,20 @@ fun MediaScreen(onOpenVolume: () -> Unit) {
             np == null && link.state != LinkState.READY -> EmptyMedia("Not connected", "Connect to your iPhone to control what it's playing.")
             np == null -> EmptyMedia("Media unavailable", "Your iPhone isn't sharing media controls right now.")
             !np.hasPlayer -> EmptyMedia("Nothing playing", "Start music or a podcast on your iPhone, then control it here.")
-            else -> Player(np, onOpenVolume)
+            else -> Player(np)
         }
     }
 }
 
 @Composable
-private fun Player(np: NowPlaying, onOpenVolume: () -> Unit) {
+private fun Player(np: NowPlaying) {
     val haptics = LocalHapticFeedback.current
+    val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
+    val app = remember(np.playerName, seen) { AppCatalog.forPlayerName(np.playerName, seen) }
+    val palette = remember(app.color) { MediaPalette.from(Color(app.color)) }
     val volume = rememberVolume(np)
-    var volumeShownAt by remember { mutableLongStateOf(0L) }
+    var volumeChangedAt by remember { mutableLongStateOf(0L) }
+    val reduceMotion = rememberReduceMotion()
 
     // Position only ticks while this screen is visible and playing: a UI timer, never a Bluetooth poll.
     val now by produceState(SystemClock.elapsedRealtime(), np.isPlaying, np.elapsedAtMillis) {
@@ -92,11 +110,11 @@ private fun Player(np: NowPlaying, onOpenVolume: () -> Unit) {
             value = SystemClock.elapsedRealtime()
         }
     }
-    // While the bezel turns, the level shows on the screen edge, then fades away (the Wear OS pattern).
-    val showLevel by produceState(false, volumeShownAt) {
-        if (volumeShownAt == 0L) return@produceState
+    // While the bezel turns, the level shows on the edge and at the bottom, then fades back to the times.
+    val showVolume by produceState(false, volumeChangedAt) {
+        if (volumeChangedAt == 0L) return@produceState
         value = true
-        delay(LEVEL_VISIBLE_MS)
+        delay(VOLUME_VISIBLE_MS)
         value = false
     }
 
@@ -108,77 +126,90 @@ private fun Player(np: NowPlaying, onOpenVolume: () -> Unit) {
     Box(
         Modifier
             .fillMaxSize()
+            .background(Brush.radialGradient(listOf(palette.glow, Color.Black), radius = 520f))
             .volumeRotary { up ->
                 volume.step(up)
-                volumeShownAt = SystemClock.elapsedRealtime()
+                volumeChangedAt = SystemClock.elapsedRealtime()
             },
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-            // Top inset keeps the player name clear of the system clock on a round screen.
-            modifier = Modifier.fillMaxSize().padding(start = 30.dp, end = 30.dp, top = 26.dp),
+            modifier = Modifier.fillMaxSize().padding(top = 34.dp, bottom = 18.dp, start = 26.dp, end = 26.dp),
         ) {
-            Text(
-                np.playerName.ifBlank { "iPhone" },
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-            )
-            Text(
-                np.title.ifBlank { "Unknown title" },
-                style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
-                textAlign = TextAlign.Center,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-            if (np.artist.isNotBlank()) {
+            // The playing app: its logo (App Store icon when the watch has one) and name.
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                AppBadge(app, size = 18.dp)
+                Spacer(Modifier.width(6.dp))
                 Text(
-                    np.artist,
-                    style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
+                    app.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White.copy(alpha = 0.72f),
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                MediaIcon(R.drawable.ic_skip_previous, "Previous", np.can(RemoteCommand.PREVIOUS_TRACK)) { send(RemoteCommand.PREVIOUS_TRACK) }
-                PlayPause(np, now) { send(RemoteCommand.TOGGLE_PLAY_PAUSE) }
-                MediaIcon(R.drawable.ic_skip_next, "Next", np.can(RemoteCommand.NEXT_TRACK)) { send(RemoteCommand.NEXT_TRACK) }
-            }
             Spacer(Modifier.height(6.dp))
-            IconButton(
-                onClick = onOpenVolume,
-                modifier = Modifier.size(44.dp).semantics { stateDescription = volume.percentText },
+            Text(
+                np.title.ifBlank { "Unknown title" },
+                style = MaterialTheme.typography.titleMedium.copy(textDirection = TextDirection.Content),
+                color = Color.White,
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = if (reduceMotion) TextOverflow.Ellipsis else TextOverflow.Clip,
+                modifier = Modifier.fillMaxWidth().then(if (reduceMotion) Modifier else Modifier.basicMarquee(iterations = 2)),
+            )
+            Text(
+                np.artist.ifBlank { " " },
+                style = MaterialTheme.typography.bodySmall.copy(textDirection = TextDirection.Content),
+                color = Color.White.copy(alpha = 0.66f),
+                textAlign = TextAlign.Center,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.weight(1f))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Icon(painterResource(R.drawable.ic_volume_up), contentDescription = "Volume", modifier = Modifier.size(22.dp))
+                SkipButton(R.drawable.ic_skip_previous, "Previous", np.can(RemoteCommand.PREVIOUS_TRACK)) { send(RemoteCommand.PREVIOUS_TRACK) }
+                PlayPause(np, now, palette) { send(RemoteCommand.TOGGLE_PLAY_PAUSE) }
+                SkipButton(R.drawable.ic_skip_next, "Next", np.can(RemoteCommand.NEXT_TRACK)) { send(RemoteCommand.NEXT_TRACK) }
             }
+            Spacer(Modifier.weight(1f))
+            Text(
+                when {
+                    showVolume -> "Volume ${volume.percentText}"
+                    np.durationSeconds > 0 -> "${clock(np.positionSeconds(now))} / ${clock(np.durationSeconds)}"
+                    else -> ""
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = if (showVolume) palette.accent else Color.White.copy(alpha = 0.6f),
+                maxLines = 1,
+            )
         }
-        if (showLevel) {
+        if (showVolume) {
             LevelIndicator(value = { volume.fraction }, modifier = Modifier.align(Alignment.CenterStart))
         }
     }
 }
 
-/** Play/pause with the track's progress as a ring around it, as Wear OS media players draw it. */
+/** Play/pause in the app's accent colour, with the track progress as a ring around it. */
 @Composable
-private fun PlayPause(np: NowPlaying, now: Long, onClick: () -> Unit) {
-    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(68.dp)) {
-        if (np.durationSeconds > 0) {
-            val fraction = (np.positionSeconds(now) / np.durationSeconds).toFloat()
-            CircularProgressIndicator(
-                progress = { fraction },
-                modifier = Modifier.fillMaxSize().semantics { contentDescription = "Track progress" },
-                strokeWidth = 3.dp,
-            )
-        }
+private fun PlayPause(np: NowPlaying, now: Long, palette: MediaPalette, onClick: () -> Unit) {
+    Box(contentAlignment = Alignment.Center, modifier = Modifier.size(70.dp)) {
+        val fraction = if (np.durationSeconds > 0) (np.positionSeconds(now) / np.durationSeconds).toFloat() else 0f
+        CircularProgressIndicator(
+            progress = { fraction },
+            modifier = Modifier.fillMaxSize().semantics { contentDescription = "Track progress" },
+            strokeWidth = 3.dp,
+            colors = ProgressIndicatorDefaults.colors(indicatorColor = palette.accent, trackColor = palette.accent.copy(alpha = 0.22f)),
+        )
         FilledIconButton(
             onClick = onClick,
             enabled = np.can(RemoteCommand.TOGGLE_PLAY_PAUSE) || np.can(RemoteCommand.PLAY) || np.can(RemoteCommand.PAUSE),
-            modifier = Modifier.size(56.dp),
+            colors = IconButtonDefaults.filledIconButtonColors(containerColor = palette.accent, contentColor = palette.onAccent),
+            modifier = Modifier.size(58.dp),
         ) {
             Icon(
                 painterResource(if (np.isPlaying) R.drawable.ic_pause else R.drawable.ic_play),
@@ -189,47 +220,41 @@ private fun PlayPause(np: NowPlaying, now: Long, onClick: () -> Unit) {
     }
 }
 
-/**
- * The iPhone's volume, Wear OS style: a stepper (+ at the top, − at the bottom) with the level on the
- * screen edge, and the bezel or crown to change it. iOS moves its volume in 16 steps, and each AMS
- * command is exactly one step, so the stepper uses those steps.
- */
 @Composable
-fun VolumeScreen() {
-    val media by BridgeGraph.media.collectAsStateWithLifecycle()
-    val np = media
-    val volume = rememberVolume(np)
-    val enabled = np != null
+private fun SkipButton(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        colors = IconButtonDefaults.iconButtonColors(contentColor = Color.White),
+        modifier = Modifier.size(48.dp),
+    ) {
+        Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(28.dp))
+    }
+}
 
-    ScreenScaffold {
-        Box(Modifier.fillMaxSize().volumeRotary(volume::step)) {
-            Stepper(
-                value = volume.level,
-                onValueChange = { next -> if (next != volume.level) volume.step(next > volume.level) },
-                valueProgression = 0..STEPS,
-                decreaseIcon = { Icon(painterResource(R.drawable.ic_volume_down), contentDescription = "Volume down") },
-                increaseIcon = { Icon(painterResource(R.drawable.ic_volume_up), contentDescription = "Volume up") },
-                enabled = enabled,
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("iPhone volume", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(volume.percentText, style = MaterialTheme.typography.displaySmall)
-                    if (!enabled) Text("Not connected", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            StepperLevelIndicator(value = { volume.level }, valueProgression = 0..STEPS)
+/**
+ * Colours derived from the playing app's brand colour. The accent is kept bright enough to read on black
+ * (very dark brands such as X are lifted toward white), and the icon on it is black or white, whichever
+ * contrasts more. The glow is the accent at low strength, so the screen stays mostly black.
+ */
+private class MediaPalette(val accent: Color, val onAccent: Color, val glow: Color) {
+    companion object {
+        fun from(brand: Color): MediaPalette {
+            val accent = if (brand.luminance() < 0.08f) lerp(brand, Color.White, 0.7f) else brand
+            val onAccent = if (accent.luminance() > 0.45f) Color.Black else Color.White
+            return MediaPalette(accent, onAccent, accent.copy(alpha = 0.22f))
         }
     }
 }
 
 /**
- * Volume as the UI shows it: optimistic on each step (so the bezel feels instant), then corrected by the
- * level iOS reports back over AMS.
+ * Volume as the UI shows it: optimistic on each bezel click (so it feels instant), then corrected by the
+ * level iOS reports back over AMS. iOS has 16 volume steps, and each command moves exactly one.
  */
 private class VolumeState(private val haptic: () -> Unit) {
     var level by mutableIntStateOf(0)
-    var known by androidx.compose.runtime.mutableStateOf(false)
-    /** iOS's exact level (it needn't sit on a step), or the optimistic one right after a step. */
+    var known by mutableStateOf(false)
+    /** iOS's exact level (it needn't sit on a step), or the optimistic one right after a click. */
     var fraction by mutableFloatStateOf(0f)
 
     val percentText: String get() = if (known) "${(fraction * 100).roundToInt()}%" else "–"
@@ -280,15 +305,22 @@ private fun Modifier.volumeRotary(onStep: (up: Boolean) -> Unit): Modifier {
         .focusable()
 }
 
-/** iOS lists the commands the current player supports. An empty list means unknown: allow everything. */
-private fun NowPlaying.can(c: RemoteCommand) = supported.isEmpty() || c in supported
-
 @Composable
-private fun MediaIcon(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(48.dp)) {
-        Icon(painterResource(icon), contentDescription = label, modifier = Modifier.size(26.dp))
+private fun rememberReduceMotion(): Boolean {
+    val context = LocalContext.current
+    return remember {
+        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
     }
 }
+
+/** 74.0 → "1:14", 3725.0 → "1:02:05". */
+private fun clock(seconds: Double): String {
+    val s = seconds.toLong().coerceAtLeast(0)
+    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
+}
+
+/** iOS lists the commands the current player supports. An empty list means unknown: allow everything. */
+private fun NowPlaying.can(c: RemoteCommand) = supported.isEmpty() || c in supported
 
 @Composable
 private fun EmptyMedia(title: String, detail: String) {
@@ -318,4 +350,4 @@ private fun EmptyMedia(title: String, detail: String) {
 /** iOS's volume steps (each VolumeUp/VolumeDown command moves one). */
 private const val STEPS = 16
 private const val ROTARY_STEP_PX = 48f
-private const val LEVEL_VISIBLE_MS = 2_000L
+private const val VOLUME_VISIBLE_MS = 1_500L

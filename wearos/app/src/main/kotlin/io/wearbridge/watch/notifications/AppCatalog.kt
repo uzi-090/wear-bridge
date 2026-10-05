@@ -61,6 +61,8 @@ object AppCatalog {
         e("com.apple.Music", "Music", 0xFFFA243C, AppKind.MEDIA, "applemusic"),
         e("com.spotify.client", "Spotify", 0xFF1DB954, AppKind.MEDIA, "spotify"),
         e("com.google.ios.youtube", "YouTube", 0xFFFF0000, AppKind.MEDIA, "youtube"),
+        e("com.google.ios.youtubemusic", "YouTube Music", 0xFFFF0000, AppKind.MEDIA, "youtube"),
+        e("com.apple.podcasts", "Podcasts", 0xFF9B4DDB, AppKind.MEDIA),
         e("com.google.Maps", "Google Maps", 0xFF34A853, AppKind.NAVIGATION, "googlemaps"),
         // Seen on the test iPhone (India)
         e("com.kotak811mobilebankingapp.instantsavingsupiscanandpayrecharge", "Kotak 811", 0xFFED1C24, AppKind.FINANCE),
@@ -89,6 +91,19 @@ object AppCatalog {
         val name = displayName?.takeIf { it.isNotBlank() } ?: AppLabels.fallback(bundleId)
         val color = PALETTE[Math.floorMod((bundleId ?: name).hashCode(), PALETTE.size)]
         return AppInfo(bundleId, name, color, kindFor(category))
+    }
+
+    /**
+     * The app behind an AMS player name (iOS reports only the display name, e.g. "Spotify" or "Music").
+     * Tries the catalog, then apps the watch has seen in notifications ([seenApps]: bundle ID → name),
+     * so their App Store icons can be used too. Falls back to a monogram badge.
+     */
+    fun forPlayerName(name: String, seenApps: Map<String, String>): AppInfo {
+        val clean = name.trim { it.isWhitespace() || it == '\u200E' || it == '\u200F' }
+        KNOWN.values.firstOrNull { it.name.equals(clean, ignoreCase = true) }?.let { return it }
+        seenApps.entries.firstOrNull { it.value.trim { c -> c.isWhitespace() || c == '\u200E' || c == '\u200F' }.equals(clean, ignoreCase = true) }
+            ?.let { return resolve(it.key, it.value, Category.ENTERTAINMENT) }
+        return resolve(null, clean.ifBlank { "iPhone" }, Category.ENTERTAINMENT)
     }
 
     fun kindFor(category: Category): AppKind = when (category) {

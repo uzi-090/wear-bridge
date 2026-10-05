@@ -43,6 +43,7 @@ class BridgePeripheral(
         fun onControlWrite(device: BluetoothDevice, value: ByteArray)
         fun onSettingsChunk(device: BluetoothDevice, value: ByteArray)
         fun onAuthChunk(device: BluetoothDevice, value: ByteArray)
+        fun onContactsChunk(device: BluetoothDevice, value: ByteArray)
         /** The iPhone enabled or disabled notifications on SETTINGS, EVENTS or DEVICE_STATUS. */
         fun onSubscription(device: BluetoothDevice, characteristic: java.util.UUID, subscribed: Boolean)
     }
@@ -283,6 +284,7 @@ class BridgePeripheral(
                 BridgeUuids.CONTROL -> listener.onControlWrite(device, value!!.copyOf())
                 BridgeUuids.SETTINGS -> listener.onSettingsChunk(device, value!!.copyOf())
                 BridgeUuids.AUTH -> listener.onAuthChunk(device, value!!.copyOf())
+                BridgeUuids.CONTACTS -> listener.onContactsChunk(device, value!!.copyOf())
             }
         }
     }
@@ -306,6 +308,13 @@ class BridgePeripheral(
             addCharacteristic(
                 notifying(BridgeUuids.SETTINGS, BluetoothGattCharacteristic.PROPERTY_WRITE, BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED),
             )
+            addCharacteristic(
+                BluetoothGattCharacteristic(
+                    BridgeUuids.CONTACTS,
+                    BluetoothGattCharacteristic.PROPERTY_WRITE,
+                    BluetoothGattCharacteristic.PERMISSION_WRITE_ENCRYPTED,
+                ),
+            )
             addCharacteristic(notifying(BridgeUuids.EVENTS, 0, 0))
             addCharacteristic(notifying(BridgeUuids.DEVICE_STATUS, 0, 0))
             addCharacteristic(
@@ -327,7 +336,8 @@ class BridgePeripheral(
 
     private fun pairingValue(): ByteArray {
         val caps = BridgeUuids.CAP_ANCS_CLIENT or BridgeUuids.CAP_AMS_CLIENT or BridgeUuids.CAP_SETTINGS or
-            BridgeUuids.CAP_DEVICE_STATUS or BridgeUuids.CAP_FIND or BridgeUuids.CAP_PREFS or BridgeUuids.CAP_SECURE
+            BridgeUuids.CAP_DEVICE_STATUS or BridgeUuids.CAP_FIND or BridgeUuids.CAP_PREFS or BridgeUuids.CAP_SECURE or
+            BridgeUuids.CAP_CONTACTS
         return byteArrayOf(
             BridgeUuids.PROTOCOL_VERSION.toByte(),
             caps.toByte(), (caps ushr 8).toByte(), (caps ushr 16).toByte(), (caps ushr 24).toByte(),
@@ -335,6 +345,6 @@ class BridgePeripheral(
     }
 
     private companion object {
-        val WRITABLE = setOf(BridgeUuids.CONTROL, BridgeUuids.SETTINGS, BridgeUuids.AUTH)
+        val WRITABLE = setOf(BridgeUuids.CONTROL, BridgeUuids.SETTINGS, BridgeUuids.AUTH, BridgeUuids.CONTACTS)
     }
 }

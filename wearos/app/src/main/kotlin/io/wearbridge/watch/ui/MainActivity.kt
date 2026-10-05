@@ -107,13 +107,19 @@ private fun WatchApp(
                     onOpenNotifications = { nav.navigate("notifications") },
                     onOpenMedia = { nav.navigate("media") },
                     onOpenFindPhone = { nav.navigate("find") },
+                    onOpenContacts = { nav.navigate("contacts") },
                     onOpenDiagnostics = { nav.navigate("diagnostics") },
                     onOpenSettings = { nav.navigate("settings") },
                 )
             }
             composable("settings") { SettingsScreen() }
-            composable("media") { MediaScreen(onOpenVolume = { nav.navigate("volume") }) }
-            composable("volume") { VolumeScreen() }
+            composable("media") { MediaScreen() }
+            composable("contacts") {
+                io.wearbridge.watch.contacts.ContactsScreen(onOpen = { id -> nav.navigate("contact/" + android.net.Uri.encode(id)) })
+            }
+            composable("contact/{id}") { entry ->
+                io.wearbridge.watch.contacts.ContactDetailScreen(entry.arguments?.getString("id").orEmpty())
+            }
             composable("find") { io.wearbridge.watch.find.FindPhoneScreen() }
             composable("notifications") {
                 NotificationListScreen(
