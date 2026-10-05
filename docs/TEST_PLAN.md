@@ -37,9 +37,10 @@
 | M1.8 | Clear the notification on the iPhone | Disappears from the watch | | |
 | M1.9 | Tap the iOS-labelled negative action (e.g. "Clear") on the watch | Removed on the iPhone | | |
 | M1.10 | Get a **real cellular call** | Full-screen call surface with iOS's labels (record them verbatim) | Call reached the watch in **88–104 ms**. 1st attempt: the surface **never appeared** (Android's 50-per-app quota was full from the replay, fix e14aa6d). `USE_FULL_SCREEN_INTENT` is **denied by default** on Wear OS 6, so the call falls back to a heads-up notification with iOS's actions. Labels: pending (now logged) | partial |
-| M1.11 | Tap the label iOS gives for declining | The call is declined on the iPhone | | |
+| M1.11 | Tap the label iOS gives for declining | The call is declined on the iPhone | **✔ 2026-10-05:** labels were exactly **"Answer" / "Decline"**. Decline from the watch succeeded in **115 ms** and the iPhone stopped ringing | ✔ |
 | M1.12 | Call again, tap the label iOS gives for answering | The call is answered on the iPhone. **Record where the audio goes** | **✔ 2026-10-05:** tapped Answer on the watch, the ANCS positive action succeeded in **167 ms**, and the call connected. **Audio stayed on the iPhone** (as predicted: control ≠ audio). Answering on the iPhone removed the watch's call notification at the same moment | ✔ |
-| M1.13 | Missed call | MissedCall notification. Record its labels | | |
+| M1.12b | Answer on the watch, then tap the in-call button | iOS's active-call action ends the call | iOS exposes Category 12 with the single negative label **"End Call"**. 1st try: the user saw nothing (silent post, call screen closed on answer). Fixed: Answer now opens the in-call screen. Re-test pending | |
+| M1.13 | Missed call | MissedCall notification. Record its labels | ✔ After the decline, iOS posted MissedCall (Category 2) with labels **"Dial" / "Clear"** | ✔ |
 | M1.14 | iPhone locked vs unlocked, for M1.6 | Record any difference in content (the *Show Previews* setting) | | |
 | M1.15 | Force-quit PairingPOC, then repeat M1.6 | Still works (ANCS doesn't need the app) | | |
 | M1.16 | Walk out of range for 1 minute and back | `RECONNECTING` → READY, **no buzz** for old notifications | App-restart variant ✔: the iPhone reconnected 0.23 s after advertising began, READY in 3.2–4.7 s. 16 replayed notifications were stored silently. **Found:** the replay costs about 0.6 s per notification (serial fetch), so new messages now jump the backlog (fix 2bcc283). Out-of-range walk: pending | partial |

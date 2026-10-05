@@ -94,7 +94,12 @@ class MirrorNotifier(private val context: Context) {
             .setLocalOnly(true)
 
         a.negativeActionLabel?.let { builder.addAction(0, it, actionIntent(n.uid, ActionId.NEGATIVE)) }
-        a.positiveActionLabel?.let { builder.addAction(0, it, actionIntent(n.uid, ActionId.POSITIVE)) }
+        a.positiveActionLabel?.let {
+            // Answering a call opens the call screen (it becomes the in-call screen with "End Call").
+            // An activity PendingIntent is allowed from a notification, whereas a broadcast can't start UI.
+            val intent = if (n.isIncomingCall) callIntent(n.uid, ActionId.POSITIVE) else actionIntent(n.uid, ActionId.POSITIVE)
+            builder.addAction(0, it, intent)
+        }
 
         if (n.isIncomingCall) {
             builder.setCategory(NotificationCompat.CATEGORY_CALL)
@@ -102,7 +107,10 @@ class MirrorNotifier(private val context: Context) {
                 .setOngoing(true)
                 .setFullScreenIntent(callIntent(), true)
         } else if (n.isActiveCall) {
-            builder.setCategory(NotificationCompat.CATEGORY_CALL).setOngoing(true)
+            builder.setCategory(NotificationCompat.CATEGORY_CALL)
+                .setOngoing(true)
+                .setContentIntent(callIntent())
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
         } else {
             builder.setPriority(if (channel == CHANNEL_ALERT) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
         }
@@ -158,11 +166,14 @@ class MirrorNotifier(private val context: Context) {
         return PendingIntent.getActivity(context, uid?.toInt() ?: 0, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
-    private fun callIntent(): PendingIntent = PendingIntent.getActivity(
-        context, 1,
-        Intent(context, IncomingCallActivity::class.java),
-        PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
-    )
+    private fun callIntent(uid: Long? = null, action: ActionId? = null): PendingIntent {
+        val intent = Intent(context, IncomingCallActivity::class.java)
+        if (uid != null && action != null) {
+            intent.putExtra(IncomingCallActivity.EXTRA_UID, uid).putExtra(IncomingCallActivity.EXTRA_ACTION, action.id)
+        }
+        val requestCode = if (uid == null) 1 else (uid.toInt() shl 2) or 2
+        return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
 
     private fun actionIntent(uid: Long, action: ActionId): PendingIntent = PendingIntent.getBroadcast(
         context,

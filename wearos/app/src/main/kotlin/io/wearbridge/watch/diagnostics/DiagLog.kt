@@ -38,8 +38,13 @@ object DiagLog {
 }
 
 object Redact {
-    @Suppress("UNUSED_PARAMETER")
-    fun uid(uid: Long): String = "***"
+    private val salt = java.security.SecureRandom().nextLong()
+
+    /**
+     * A 4-hex-digit tag that's stable within this process, so log lines about one notification can be
+     * correlated. It's salted per process, so it can't be linked across runs or back to the iOS UID.
+     */
+    fun uid(uid: Long): String = "u" + ((java.lang.Long.hashCode(uid * -0x61c8864680b583ebL xor salt)) and 0xFFFF).toString(16)
 
     /** A short, non-reversible tag so log lines about the same device can be correlated. */
     fun device(device: BluetoothDevice?): String =

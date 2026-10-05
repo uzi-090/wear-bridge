@@ -1,5 +1,6 @@
 package io.wearbridge.watch.ui
 
+import android.content.Intent
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -38,8 +39,9 @@ import io.wearbridge.watch.notifications.WatchNotification
 import kotlinx.coroutines.delay
 
 /**
- * Full-screen surface for an iPhone call. The buttons are whatever actions iOS exposes, with iOS's
- * own labels. This is call CONTROL only: audio stays wherever the iPhone routes it.
+ * The iPhone call surface: ringing (iOS's Answer/Decline), then in progress (iOS's "End Call",
+ * from the undocumented active-call category). Every button is an action iOS exposes, with iOS's
+ * own label. This is call CONTROL only: audio stays wherever the iPhone routes it.
  */
 class IncomingCallActivity : ComponentActivity() {
 
@@ -48,25 +50,54 @@ class IncomingCallActivity : ComponentActivity() {
         setShowWhenLocked(true)
         setTurnScreenOn(true)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (savedInstanceState == null) performRequestedAction(intent)
 
         setContent {
             MaterialTheme {
-                val call by BridgeGraph.repository.incomingCall.collectAsStateWithLifecycle()
+                val repo = BridgeGraph.repository
+                val incoming by repo.incomingCall.collectAsStateWithLifecycle()
+                val active by repo.activeCall.collectAsStateWithLifecycle()
                 var acted by remember { mutableStateOf(false) }
-                LaunchedEffect(call) {
+                val call = incoming ?: active
+
+                LaunchedEffect(call == null) {
                     if (call == null) {
-                        if (acted) delay(900) // let the confirmation register before closing
-                        finish()
+                        // Wait briefly: answering removes the ringing call just before iOS posts the active one.
+                        delay(if (acted) 1_500 else 1_200)
+                        if (repo.incomingCall.value == null && repo.activeCall.value == null) finish()
                     }
                 }
-                call?.let { CallScreen(it, onActed = { acted = true }) }
+                when {
+                    call != null -> CallScreen(call, inProgress = incoming == null, onActed = { acted = true })
+                    acted -> Status("Connecting on iPhone…")
+                }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        performRequestedAction(intent)
+    }
+
+    /** "Answer" from the notification opens this screen with the action attached. */
+    private fun performRequestedAction(intent: Intent?) {
+        val uid = intent?.getLongExtra(EXTRA_UID, -1) ?: -1
+        val action = ActionId.entries.firstOrNull { it.id == intent?.getIntExtra(EXTRA_ACTION, -1) }
+        if (uid >= 0 && action != null) {
+            BridgeGraph.performAction(uid, action)
+            intent?.removeExtra(EXTRA_UID)
+        }
+    }
+
+    companion object {
+        const val EXTRA_UID = "uid"
+        const val EXTRA_ACTION = "action"
     }
 }
 
 @Composable
-private fun CallScreen(call: WatchNotification, onActed: () -> Unit) {
+private fun CallScreen(call: WatchNotification, inProgress: Boolean, onActed: () -> Unit) {
     val status by BridgeGraph.repository.actionStatus.collectAsStateWithLifecycle()
     val haptics = LocalHapticFeedback.current
     val a = call.ancs
@@ -80,13 +111,13 @@ private fun CallScreen(call: WatchNotification, onActed: () -> Unit) {
     Box(Modifier.fillMaxSize().padding(horizontal = 18.dp), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
-                "iPhone · ${call.appLabel}",
+                if (inProgress) "On iPhone call" else "iPhone · ${call.appLabel}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                a.title.ifBlank { "Incoming call" },
+                a.title.ifBlank { if (inProgress) "Call in progress" else "Incoming call" },
                 style = MaterialTheme.typography.titleLarge,
                 textAlign = TextAlign.Center,
                 maxLines = 2,
@@ -116,6 +147,7 @@ private fun CallScreen(call: WatchNotification, onActed: () -> Unit) {
             Text(
                 when {
                     s != null -> actionStatusText(s)
+                    inProgress -> "Audio is on your iPhone"
                     !call.hasActions -> "Answer on your iPhone"
                     else -> ""
                 },
@@ -125,5 +157,12 @@ private fun CallScreen(call: WatchNotification, onActed: () -> Unit) {
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
+    }
+}
+
+@Composable
+private fun Status(text: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text(text, style = MaterialTheme.typography.bodyMedium, textAlign = TextAlign.Center)
     }
 }

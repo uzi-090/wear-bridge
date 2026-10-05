@@ -41,6 +41,10 @@ class NotificationRepository {
     private val _incomingCall = MutableStateFlow<WatchNotification?>(null)
     val incomingCall: StateFlow<WatchNotification?> = _incomingCall
 
+    /** The connected call (undocumented ANCS category 12), whose only action is iOS's "End Call". */
+    private val _activeCall = MutableStateFlow<WatchNotification?>(null)
+    val activeCall: StateFlow<WatchNotification?> = _activeCall
+
     private val _actionStatus = MutableStateFlow<ActionStatus?>(null)
     val actionStatus: StateFlow<ActionStatus?> = _actionStatus
 
@@ -51,11 +55,13 @@ class NotificationRepository {
                 .take(MAX_ITEMS)
         }
         if (n.isIncomingCall) _incomingCall.value = n
+        if (n.isActiveCall) _activeCall.value = n
     }
 
     fun remove(uid: Long) {
         _items.update { list -> list.filterNot { it.uid == uid } }
         if (_incomingCall.value?.uid == uid) _incomingCall.value = null
+        if (_activeCall.value?.uid == uid) _activeCall.value = null
     }
 
     fun get(uid: Long): WatchNotification? = _items.value.firstOrNull { it.uid == uid }
@@ -73,6 +79,7 @@ class NotificationRepository {
     fun markAllStale() {
         _items.update { list -> list.map { it.copy(stale = true) } }
         _incomingCall.value = null // a ringing call can't be acted on any more
+        _activeCall.value = null
     }
 
     /** After reconnect and replay: whatever iOS didn't re-announce is gone on the iPhone. */
