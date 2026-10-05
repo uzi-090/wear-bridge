@@ -21,22 +21,33 @@ class BridgeSettings(context: Context) {
         _endCallFromWatch.value = enabled
     }
 
-    private val _subtlePopups = MutableStateFlow(prefs.getBoolean(KEY_SUBTLE, false))
+    private val _popupStyle = MutableStateFlow(
+        PopupStyle.entries.firstOrNull { it.name == prefs.getString(KEY_POPUP, null) }
+            ?: if (prefs.getBoolean(KEY_SUBTLE_LEGACY, false)) PopupStyle.SUBTLE else PopupStyle.BANNER,
+    )
 
-    /**
-     * Post at default importance instead of high. On One UI Watch, high importance gets Samsung's
-     * full-screen popup (when the screen was off). Default importance vibrates and shows the dot.
-     * The popup style itself belongs to Samsung's system UI: apps can't choose it.
-     */
-    val subtlePopups: StateFlow<Boolean> = _subtlePopups
+    /** How alerting notifications appear. See [PopupStyle]. */
+    val popupStyle: StateFlow<PopupStyle> = _popupStyle
 
-    fun setSubtlePopups(enabled: Boolean) {
-        prefs.edit().putBoolean(KEY_SUBTLE, enabled).apply()
-        _subtlePopups.value = enabled
+    fun setPopupStyle(style: PopupStyle) {
+        prefs.edit().putString(KEY_POPUP, style.name).apply()
+        _popupStyle.value = style
     }
 
     private companion object {
         const val KEY_END_CALL = "experimental_end_call"
-        const val KEY_SUBTLE = "subtle_popups"
+        const val KEY_POPUP = "popup_style"
+        const val KEY_SUBTLE_LEGACY = "subtle_popups"
     }
+}
+
+/**
+ * Pop-up presentation on One UI Watch, verified on hardware 2026-10-05. Samsung's system UI picks its
+ * small top pop-up when the screen is already on as the notification is posted, and its full-screen
+ * pop-up when the screen is off. There's no API to choose the style directly.
+ */
+enum class PopupStyle(val label: String, val description: String) {
+    BANNER("Banner", "Wakes the screen and shows a small pop-up at the top"),
+    FULL("Full screen", "Samsung's full-screen pop-up"),
+    SUBTLE("Subtle", "Vibrates and shows a dot, with no pop-up"),
 }

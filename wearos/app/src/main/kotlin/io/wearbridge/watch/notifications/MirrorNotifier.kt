@@ -103,7 +103,7 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         val channel = when {
             n.isIncomingCall || n.isActiveCall -> CHANNEL_CALLS
             a.flags and EventFlags.SILENT != 0 -> CHANNEL_QUIET
-            settings.subtlePopups.value -> CHANNEL_SUBTLE
+            settings.popupStyle.value == io.wearbridge.watch.settings.PopupStyle.SUBTLE -> CHANNEL_SUBTLE
             else -> CHANNEL_ALERT
         }
         val builder = NotificationCompat.Builder(context, channel)
@@ -142,6 +142,52 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         } else {
             builder.setPriority(if (channel == CHANNEL_ALERT) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_LOW)
         }
+        val notification = builder.build()
+        val wantBanner = alert && !n.isIncomingCall && channel == CHANNEL_ALERT &&
+            settings.popupStyle.value == io.wearbridge.watch.settings.PopupStyle.BANNER
+        if (wantBanner && !power.isInteractive) {
+            postAfterWake(n, notification)
+        } else {
+            post(n, notification)
+        }
+    }
+
+    private val power = context.getSystemService(android.os.PowerManager::class.java)
+    private val main = android.os.Handler(android.os.Looper.getMainLooper())
+    private val pendingPosts = HashMap<Long, Runnable>()
+
+    /**
+     * Banner style: switch the screen on first, then post as soon as it's interactive, so One UI
+     * Watch shows its small top pop-up instead of the full-screen one. Costs one brief screen wake
+     * per alerting notification (alerts are already coalesced), the same as Samsung's own
+     * "Turn on screen" setting.
+     */
+    private fun postAfterWake(n: WatchNotification, notification: android.app.Notification) {
+        @Suppress("DEPRECATION") // no non-deprecated way for a background service to light the screen
+        val lock = power.newWakeLock(
+            android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK or android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                android.os.PowerManager.ON_AFTER_RELEASE,
+            "Bridge:banner",
+        )
+        lock.acquire(WAKE_HOLD_MS)
+        val started = android.os.SystemClock.uptimeMillis()
+        val task = object : Runnable {
+            override fun run() {
+                val waited = android.os.SystemClock.uptimeMillis() - started
+                if (!power.isInteractive && waited < WAKE_TIMEOUT_MS) {
+                    main.postDelayed(this, WAKE_POLL_MS)
+                    return
+                }
+                synchronized(this@MirrorNotifier) { if (pendingPosts.remove(n.uid) !== this) return }
+                // A short settle delay after the screen turns on, so the system UI sees it as interactive.
+                main.postDelayed({ post(n, notification) }, if (waited < WAKE_TIMEOUT_MS) WAKE_SETTLE_MS else 0)
+            }
+        }
+        synchronized(this) { pendingPosts.put(n.uid, task)?.let(main::removeCallbacks) }
+        main.post(task)
+    }
+
+    private fun post(n: WatchNotification, notification: android.app.Notification) {
         synchronized(this) {
             posted.remove(n.uid)
             posted.add(n.uid)
@@ -152,11 +198,12 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
                 manager.cancel(TAG, victim.toInt())
             }
         }
-        manager.notify(TAG, n.uid.toInt(), builder.build())
+        manager.notify(TAG, n.uid.toInt(), notification)
     }
 
     @Synchronized
     fun cancel(uid: Long) {
+        pendingPosts.remove(uid)?.let(main::removeCallbacks) // removed before its banner could post
         posted.remove(uid)
         callUids.remove(uid)
         manager.cancel(TAG, uid.toInt())
@@ -165,6 +212,8 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
     /** Cancels mirrored notifications only. The foreground-service notification stays. */
     @Synchronized
     fun cancelAll() {
+        pendingPosts.values.forEach(main::removeCallbacks)
+        pendingPosts.clear()
         posted.forEach { manager.cancel(TAG, it.toInt()) }
         posted.clear()
         callUids.clear()
@@ -220,6 +269,10 @@ class MirrorNotifier(private val context: Context, private val settings: io.wear
         const val CHANNEL_SERVICE = "service"
         const val SERVICE_NOTIFICATION_ID = 1
         private const val MAX_POSTED = 24
+        private const val WAKE_HOLD_MS = 3_000L
+        private const val WAKE_POLL_MS = 50L
+        private const val WAKE_TIMEOUT_MS = 1_000L
+        private const val WAKE_SETTLE_MS = 150L
         const val MASKED_TEXT = "Content hidden · tap to view"
         private const val TAG = "ios"
         private const val GROUP_PREFIX = "ios:"

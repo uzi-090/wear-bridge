@@ -20,13 +20,14 @@ import io.wearbridge.watch.notifications.AppCatalog
 import io.wearbridge.watch.notifications.AppKind
 import io.wearbridge.watch.notifications.AppRule
 import io.wearbridge.watch.notifications.FilterMode
+import io.wearbridge.watch.settings.PopupStyle
 
 @Composable
 fun SettingsScreen(onOpenApps: () -> Unit) {
     val settings = BridgeGraph.settings
     val policy = BridgeGraph.policy
     val mode by policy.mode.collectAsStateWithLifecycle()
-    val subtle by settings.subtlePopups.collectAsStateWithLifecycle()
+    val popup by settings.popupStyle.collectAsStateWithLifecycle()
     val endCall by settings.endCallFromWatch.collectAsStateWithLifecycle()
     val listState = rememberTransformingLazyColumnState()
 
@@ -51,12 +52,11 @@ fun SettingsScreen(onOpenApps: () -> Unit) {
                 )
             }
             item {
-                SwitchButton(
-                    checked = subtle,
-                    onCheckedChange = settings::setSubtlePopups,
+                FilledTonalButton(
+                    onClick = { settings.setPopupStyle(PopupStyle.entries[(popup.ordinal + 1) % PopupStyle.entries.size]) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Subtle pop-ups") },
-                    secondaryLabel = { Text("Vibrate and show a dot instead of a full-screen pop-up") },
+                    label = { Text("Pop-up style: ${popup.label}") },
+                    secondaryLabel = { Text(popup.description) },
                 )
             }
             item { ListHeader { Text("Experimental") } }
