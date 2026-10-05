@@ -25,6 +25,14 @@ class BridgeMessagesTest {
     }
 
     @Test
+    fun `phone status round-trips and matches the Swift bytes`() {
+        val s = BridgeCodec.PhoneStatus(83, charging = true, full = false)
+        assertEquals(s, BridgeCodec.decodePhoneStatus(BridgeCodec.encodePhoneStatus(s)))
+        assertEquals(listOf<Byte>(83, 1), BridgeCodec.encodePhoneStatus(s).toList())
+        assertNull(BridgeCodec.decodePhoneStatus(byteArrayOf(-1, 0)).battery)
+    }
+
+    @Test
     fun `switch payload`() {
         assertTrue(BridgeCodec.decodeSwitch(BridgeCodec.encodeSwitch(true)))
         assertFalse(BridgeCodec.decodeSwitch(BridgeCodec.encodeSwitch(false)))

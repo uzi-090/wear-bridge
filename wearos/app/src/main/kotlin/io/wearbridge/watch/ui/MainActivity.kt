@@ -68,10 +68,14 @@ class MainActivity : ComponentActivity() {
         intent?.getLongExtra(EXTRA_UID, -1)?.takeIf { it >= 0 }?.let { deepLinkUid = it }
         // Debuggable builds only: `am start ... --es route apps` opens a screen for UI checks.
         if (resources.getBoolean(io.wearbridge.watch.R.bool.demo_tools)) intent?.getStringExtra("route")?.let { debugRoute = it }
+        // From the tile: only known screen names are accepted.
+        intent?.getStringExtra(EXTRA_OPEN)?.takeIf { it in OPENABLE }?.let { debugRoute = if (it == "home") null else it }
     }
 
     companion object {
         const val EXTRA_UID = "uid"
+        const val EXTRA_OPEN = "open"
+        private val OPENABLE = setOf("home", "notifications", "media", "find", "contacts")
     }
 }
 

@@ -71,6 +71,12 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(s.displayName, "Galaxy Watch4 Classic")
     }
 
+    func testPhoneStatusMatchesTheWatch() {
+        // Same bytes as wearos BridgeMessagesTest `phone status round-trips and matches the Swift bytes`.
+        XCTAssertEqual(BridgeCodec.encodePhoneStatus(battery: 83, charging: true, full: false), [83, 1])
+        XCTAssertEqual(BridgeCodec.encodePhoneStatus(battery: nil, charging: false, full: true), [255, 2])
+    }
+
     func testUnknownBatteryAndTruncation() {
         XCTAssertNil(try BridgeCodec.decodeStatus([255, 0, 0, 0, 0, 0, 0]).battery)
         XCTAssertThrowsError(try BridgeCodec.decodeStatus([50]))

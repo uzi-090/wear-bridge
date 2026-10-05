@@ -84,6 +84,16 @@ object BridgeGraph {
     internal val phoneBatteryFlow = MutableStateFlow<Int?>(null)
     val phoneBattery: StateFlow<Int?> = phoneBatteryFlow
 
+    /**
+     * Whether the iPhone is charging: reported by the iPhone app when it's running (authoritative),
+     * otherwise inferred from the Battery Service level rising or falling. Null = unknown.
+     */
+    internal val phoneChargingFlow = MutableStateFlow<Boolean?>(null)
+    val phoneCharging: StateFlow<Boolean?> = phoneChargingFlow
+
+    /** When the iPhone app last reported its power state (elapsedRealtime), so inference doesn't override it. */
+    @Volatile internal var phoneStatusReportedAt = 0L
+
     /** iPhone model identifier from Device Information (e.g. "iPhone17,1"). */
     internal val phoneModelFlow = MutableStateFlow<String?>(null)
     val phoneModel: StateFlow<String?> = phoneModelFlow
@@ -112,6 +122,7 @@ object BridgeGraph {
         identity = IdentityStore(app)
         contacts = ContactsStore(app)
         calls = io.wearbridge.watch.calls.CallController(app).also { it.start() }
+        io.wearbridge.watch.tile.TileRefresher.start(app)
         approvals = ApprovalNotifier(app).also { it.createChannel() }
     }
 

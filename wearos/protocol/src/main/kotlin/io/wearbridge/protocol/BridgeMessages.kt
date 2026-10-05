@@ -12,6 +12,8 @@ object BridgeMessageType {
     const val FIND_PHONE_STOPPED = 0x11
     /** empty. The watch answers with a STATUS push. */
     const val PING = 0x12
+    /** u8 battery (255 = unknown), u8 flags (bit0 charging, bit1 full): the iPhone's power, from its app. */
+    const val PHONE_STATUS = 0x13
 
     // EVENTS, watch → iOS
     /** u8: 1 = the user asked the watch to ring the iPhone, 0 = stop. */
@@ -69,6 +71,19 @@ object BridgeCodec {
             osVersion = r.str(),
             appVersion = r.str(),
         ).let { if (r.remaining >= 6) it.copy(contactsGeneration = r.u32(), contactCount = r.u16()) else it }
+    }
+
+    /** The iPhone's power as its app sees it (iOS's Bluetooth battery service has the level only). */
+    data class PhoneStatus(val battery: Int?, val charging: Boolean, val full: Boolean)
+
+    fun encodePhoneStatus(s: PhoneStatus): ByteArray =
+        byteArrayOf((s.battery?.coerceIn(0, 100) ?: UNKNOWN_BATTERY).toByte(), ((if (s.charging) 1 else 0) or (if (s.full) 2 else 0)).toByte())
+
+    fun decodePhoneStatus(bytes: ByteArray): PhoneStatus {
+        require(bytes.size >= 2) { "bad PHONE_STATUS" }
+        val b = bytes[0].toInt() and 0xFF
+        val f = bytes[1].toInt() and 0xFF
+        return PhoneStatus(b.takeIf { it <= 100 }, charging = f and 1 != 0, full = f and 2 != 0)
     }
 
     fun encodeCallRequest(phone: String, name: String): ByteArray = Bytes.Writer().apply { str(phone); str(name) }.bytes()

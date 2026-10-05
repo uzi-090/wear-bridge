@@ -18,6 +18,7 @@ enum BridgeProtocol {
         case findWatch = 0x10
         case findPhoneStopped = 0x11
         case ping = 0x12
+        case phoneStatus = 0x13
         // EVENTS (watch → iPhone)
         case findPhone = 0x90
         case findWatchStopped = 0x91
@@ -224,6 +225,11 @@ enum BridgeCodec {
     }
 
     static func encodeSwitch(_ on: Bool) -> [UInt8] { [on ? 1 : 0] }
+
+    /// The iPhone's power for the watch (iOS's Bluetooth battery service carries only the level).
+    static func encodePhoneStatus(battery: Int?, charging: Bool, full: Bool) -> [UInt8] {
+        [UInt8(battery.map { min(max($0, 0), 100) } ?? 255), (charging ? 1 : 0) | (full ? 2 : 0)]
+    }
 }
 
 enum SettingsCodec {

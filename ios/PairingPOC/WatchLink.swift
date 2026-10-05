@@ -1,6 +1,7 @@
 import CoreBluetooth
 import CryptoKit
 import Foundation
+import UIKit
 import Observation
 
 /// Must match `BridgeUuids` on the watch (see docs/BLE_PROTOCOL.md). Main-actor isolated: CBUUID isn't Sendable.
@@ -99,6 +100,7 @@ final class WatchLink: NSObject {
     override init() {
         super.init()
         DiagFile.append("app launched")
+        startPowerReporting()
         // Existing users (and iOS relaunching us for state restoration) start Bluetooth at once. New users
         // start it from onboarding, after we've explained why, because creating the manager shows iOS's prompt.
         if hasSavedWatch || UserDefaults.standard.bool(forKey: Self.startedKey) {
@@ -170,6 +172,29 @@ final class WatchLink: NSObject {
     func phoneFound() { send(.findPhoneStopped, [], on: control) }
 
     var isConnected: Bool { phase == .connected }
+
+    // MARK: - iPhone power → watch
+
+    @ObservationIgnored private var powerObservers: [NSObjectProtocol] = []
+
+    /// Watches the iPhone's battery while the app runs and tells the watch when it starts or stops charging.
+    private func startPowerReporting() {
+        guard powerObservers.isEmpty else { return }
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        for name in [UIDevice.batteryStateDidChangeNotification, UIDevice.batteryLevelDidChangeNotification] {
+            powerObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { self.sendPhoneStatus() }
+            })
+        }
+    }
+
+    func sendPhoneStatus() {
+        guard security == .secure else { return }
+        let device = UIDevice.current
+        let level = device.batteryLevel < 0 ? nil : Int((device.batteryLevel * 100).rounded())
+        send(.phoneStatus, BridgeCodec.encodePhoneStatus(
+            battery: level, charging: device.batteryState == .charging, full: device.batteryState == .full), on: control)
+    }
 
     // MARK: - Notification settings (stored and applied on the watch)
 
@@ -423,6 +448,7 @@ final class WatchLink: NSObject {
             session = SecureSession(keys: BridgeCrypto.sessionKeys(staticKey: key, nonceI: nonceI, nonceW: nonceW))
             security = .secure
             note("auth: secure session")
+            sendPhoneStatus()
         case .needsApproval:
             guard let key = staticKey, let watchKey else { return }
             security = .awaitingApproval(code: BridgeCrypto.pairingCode(

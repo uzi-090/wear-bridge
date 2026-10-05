@@ -156,7 +156,8 @@ private struct StatsCard: View {
             stat(
                 symbol: batterySymbol,
                 value: link.watchStatus?.battery.map { "\($0)%" } ?? "–",
-                label: link.watchStatus?.charging == true ? "Charging" : "Battery"
+                label: link.watchStatus?.charging == true ? "Charging" : "Battery",
+                tint: link.watchStatus?.charging == true ? .green : .secondary
             )
             Divider().frame(height: 44)
             stat(
@@ -193,11 +194,12 @@ private struct StatsCard: View {
         return date.formatted(.relative(presentation: .named, unitsStyle: .abbreviated))
     }
 
-    private func stat(symbol: String, value: String, label: String) -> some View {
+    private func stat(symbol: String, value: String, label: String, tint: Color = .secondary) -> some View {
         VStack(spacing: 4) {
-            Image(systemName: symbol).font(.title3).foregroundStyle(.secondary).accessibilityHidden(true)
+            Image(systemName: symbol).font(.title3).foregroundStyle(tint).accessibilityHidden(true)
+                .contentTransition(.symbolEffect(.replace))
             Text(value).font(.headline).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
-            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(label).font(.caption).foregroundStyle(tint == .secondary ? Color.secondary : tint)
         }
         .frame(maxWidth: .infinity)
         .accessibilityElement(children: .combine)

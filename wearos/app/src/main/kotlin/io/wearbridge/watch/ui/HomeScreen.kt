@@ -79,6 +79,7 @@ fun HomeScreen(
     val phone by BridgeGraph.phoneName.collectAsStateWithLifecycle()
     val model by BridgeGraph.phoneModel.collectAsStateWithLifecycle()
     val battery by BridgeGraph.phoneBattery.collectAsStateWithLifecycle()
+    val charging by BridgeGraph.phoneCharging.collectAsStateWithLifecycle()
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
     val approval by BridgeGraph.pendingApproval.collectAsStateWithLifecycle()
     val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
@@ -93,6 +94,7 @@ fun HomeScreen(
                 link = link,
                 name = if (model != null) PhoneServicesClient.marketingName(model) else phone ?: "iPhone",
                 battery = battery,
+                charging = charging == true,
                 modifier = morph(spec),
                 transformation = surface(spec),
             )
@@ -224,6 +226,7 @@ private fun HeroCard(
     link: LinkSnapshot,
     name: String,
     battery: Int?,
+    charging: Boolean,
     modifier: Modifier,
     transformation: androidx.wear.compose.material3.SurfaceTransformation,
 ) {
@@ -243,7 +246,11 @@ private fun HeroCard(
                 } else {
                     Text(if (ready) "—" else "Offline", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface)
                 }
-                Text(name, style = MaterialTheme.typography.labelSmall, color = BridgePalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (ready && charging) {
+                    Text("Charging", style = MaterialTheme.typography.labelSmall, color = BridgePalette.Connected, maxLines = 1)
+                } else {
+                    Text(name, style = MaterialTheme.typography.labelSmall, color = BridgePalette.TextSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(46.dp)) {
                 val level = (battery ?: 0) / 100f
@@ -251,12 +258,19 @@ private fun HeroCard(
                 LiveRing(
                     progress = if (ready) level else 0f,
                     color = if (low) BridgePalette.Attention else BridgePalette.Connected,
-                    modifier = Modifier.size(46.dp).semantics { contentDescription = if (battery != null) "iPhone battery $battery percent" else "iPhone battery unknown" },
+                    modifier = Modifier.size(46.dp).semantics {
+                        contentDescription = (if (battery != null) "iPhone battery $battery percent" else "iPhone battery unknown") +
+                            if (charging) ", charging" else ""
+                    },
                 )
                 Icon(
-                    painterResource(R.drawable.ic_phone_iphone),
+                    painterResource(if (ready && charging) R.drawable.ic_bolt else R.drawable.ic_phone_iphone),
                     contentDescription = null,
-                    tint = if (ready) MaterialTheme.colorScheme.onSurface else BridgePalette.TextTertiary,
+                    tint = when {
+                        ready && charging -> BridgePalette.Connected
+                        ready -> MaterialTheme.colorScheme.onSurface
+                        else -> BridgePalette.TextTertiary
+                    },
                     modifier = Modifier.size(20.dp),
                 )
             }

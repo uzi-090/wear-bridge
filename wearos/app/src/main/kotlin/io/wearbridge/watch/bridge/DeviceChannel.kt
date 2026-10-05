@@ -111,6 +111,14 @@ class DeviceChannel(
                     BridgeGraph.findPhoneFlow.value = io.wearbridge.watch.find.FindPhoneState.FOUND
                 }
                 BridgeMessageType.PING -> sendStatus(device)
+                BridgeMessageType.PHONE_STATUS -> {
+                    val s = BridgeCodec.decodePhoneStatus(m.payload)
+                    BridgeGraph.phoneChargingFlow.value = s.charging || s.full
+                    BridgeGraph.phoneStatusReportedAt = android.os.SystemClock.elapsedRealtime()
+                    // The Battery Service is the primary source of the level; use the app's if it's missing.
+                    if (BridgeGraph.phoneBattery.value == null) s.battery?.let { BridgeGraph.phoneBatteryFlow.value = it }
+                    DiagLog.i("control: iPhone power charging=${s.charging} full=${s.full}")
+                }
                 else -> DiagLog.w("control: unknown message type ${m.type}")
             }
         } catch (e: IllegalArgumentException) {

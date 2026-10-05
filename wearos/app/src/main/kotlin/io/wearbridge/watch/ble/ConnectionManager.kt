@@ -279,6 +279,7 @@ class ConnectionManager(
                 engine.onLinkReset()
                 BridgeGraph.mediaFlow.value = null
                 BridgeGraph.phoneBatteryFlow.value = null
+                BridgeGraph.phoneChargingFlow.value = null
             }
             LinkEffect.DisconnectCentral -> {
                 device?.let(peripheral::disconnect)
@@ -412,7 +413,13 @@ class ConnectionManager(
             }
             val phone = s.phoneServices(object : PhoneServicesClient.Listener {
                 override fun onPhoneBattery(percent: Int) {
+                    val previous = BridgeGraph.phoneBatteryFlow.value
                     BridgeGraph.phoneBatteryFlow.value = percent
+                    // Without a recent report from the iPhone app, infer charging from the trend.
+                    val appReportedRecently = android.os.SystemClock.elapsedRealtime() - BridgeGraph.phoneStatusReportedAt < APP_POWER_TRUST_MS
+                    if (!appReportedRecently && previous != null && percent != previous) {
+                        BridgeGraph.phoneChargingFlow.value = percent > previous
+                    }
                 }
                 override fun onPhoneModel(model: String) {
                     BridgeGraph.phoneModelFlow.value = model
@@ -496,6 +503,9 @@ class ConnectionManager(
 }
 
 private const val FIND_PHONE_MS = 30_000L
+
+/** An iPhone app report outranks the battery-trend guess for this long (it re-reports on every change). */
+private const val APP_POWER_TRUST_MS = 10 * 60_000L
 
 private fun appVersion(context: Context): String =
     runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull().orEmpty()

@@ -72,5 +72,12 @@ dependencies {
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.navigation)
 
+    // Tile (swipe from the watch face): Material 3 Expressive tile layouts.
+    implementation(libs.wear.tiles)
+    implementation(libs.wear.protolayout)
+    implementation(libs.wear.protolayout.material3)
+    implementation(libs.wear.protolayout.expression)
+    implementation(libs.concurrent.futures.ktx)
+
     testImplementation(libs.junit)
 }
