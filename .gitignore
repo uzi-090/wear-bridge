@@ -1,0 +1,12 @@
+.DS_Store
+# Gradle / Android
+wearos/.gradle/
+wearos/.kotlin/
+wearos/**/build/
+wearos/local.properties
+*.apk
+# Xcode
+ios/**/*.xcodeproj/
+ios/**/xcuserdata/
+ios/build/
+DerivedData/
