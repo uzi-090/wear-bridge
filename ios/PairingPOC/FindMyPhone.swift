@@ -32,7 +32,14 @@ final class FindMyPhone: NSObject {
 
     /// Asks for notification permission (alert + sound), after the UI has explained why.
     func requestPermission() async -> Bool {
-        (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) ?? false
+        do {
+            let granted = try await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])
+            DiagFile.append("find: permission granted=\(granted)")
+            return granted
+        } catch {
+            DiagFile.append("find: permission error=\((error as NSError).code)")
+            return false
+        }
     }
 
     func authorizationStatus() async -> UNAuthorizationStatus {
@@ -42,6 +49,7 @@ final class FindMyPhone: NSObject {
     func start(onFound: @escaping () -> Void) {
         self.onFound = onFound
         ringing = true
+        DiagFile.append("find: start appState=\(UIApplication.shared.applicationState.rawValue)")
         if UIApplication.shared.applicationState == .active {
             playLoop()
         } else {
@@ -103,7 +111,18 @@ final class FindMyPhone: NSObject {
         // Honoured only with the Time Sensitive entitlement (paid developer team). Otherwise iOS treats it as .active.
         content.interruptionLevel = .timeSensitive
         let request = UNNotificationRequest(identifier: Self.notificationId, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        let center = UNUserNotificationCenter.current()
+        center.add(request) { error in
+            DiagFile.append("find: notification added error=\((error as NSError?)?.code ?? 0)")
+        }
+        // Diagnostics: the settings that decide whether and how iOS shows it, and whether it was delivered.
+        Task {
+            let s = await center.notificationSettings()
+            DiagFile.append("find: settings auth=\(s.authorizationStatus.rawValue) alert=\(s.alertSetting.rawValue) sound=\(s.soundSetting.rawValue) lock=\(s.lockScreenSetting.rawValue) center=\(s.notificationCenterSetting.rawValue) style=\(s.alertStyle.rawValue) timeSensitive=\(s.timeSensitiveSetting.rawValue) summary=\(s.scheduledDeliverySetting.rawValue)")
+            try? await Task.sleep(for: .seconds(1))
+            let delivered = await center.deliveredNotifications()
+            DiagFile.append("find: delivered=\(delivered.filter { $0.request.identifier == Self.notificationId }.count)")
+        }
     }
 }
 

@@ -96,6 +96,7 @@ final class WatchLink: NSObject {
 
     override init() {
         super.init()
+        DiagFile.append("app launched")
         // Existing users (and iOS relaunching us for state restoration) start Bluetooth at once. New users
         // start it from onboarding, after we've explained why, because creating the manager shows iOS's prompt.
         if hasSavedWatch || UserDefaults.standard.bool(forKey: Self.startedKey) {
@@ -346,7 +347,11 @@ final class WatchLink: NSObject {
         case .findPhone:
             let ring = m.payload.first == 1
             note("event: find phone ring=\(ring)")
-            if ring { FindMyPhone.shared.start(onFound: { [weak self] in self?.phoneFound() }) } else { FindMyPhone.shared.stop() }
+            if ring {
+                FindMyPhone.shared.start(onFound: { [weak self] in self?.phoneFound() })
+            } else {
+                FindMyPhone.shared.stop()
+            }
         case .findWatchStopped:
             note("event: watch found")
             ringingWatch = false
@@ -426,7 +431,8 @@ final class WatchLink: NSObject {
         sendHello()
     }
 
-    private func note(_ line: String) {
+    func note(_ line: String) {
+        DiagFile.append(line)
         diagnostics.append("\(Date().formatted(date: .omitted, time: .standard))  \(line)")
         if diagnostics.count > 100 { diagnostics.removeFirst(diagnostics.count - 100) }
     }

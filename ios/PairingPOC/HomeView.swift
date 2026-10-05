@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 /// "Connect Watch → Everything Just Works." One glance answers "is it working?", then a short list of
 /// things to do. Technical details live under Settings › Advanced.
@@ -11,6 +12,7 @@ struct HomeView: View {
                 VStack(spacing: 22) {
                     hero
                     if link.phase == .connected { SecurityCard(link: link) }
+                    FindIPhoneAlertsCard()
                     if link.phase == .connected || link.watchStatus != nil {
                         StatsCard(link: link)
                     }
@@ -205,5 +207,51 @@ private struct NotificationsOffCard: View {
                 .foregroundStyle(.orange)
             ShareNotificationsSteps()
         }
+    }
+}
+
+/// Shown until notification permission is decided: without it, Find iPhone can't ring in the background.
+/// (People who paired before onboarding existed never saw the onboarding step that asks.)
+private struct FindIPhoneAlertsCard: View {
+    @State private var status: UNAuthorizationStatus?
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        // A VStack (not a Group): it exists even when empty, so .task runs and finds the status.
+        // An empty Group has no view for .task to attach to, which hid this card (found on hardware).
+        VStack(spacing: 0) {
+            if status == .notDetermined {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Let your watch ring this iPhone", systemImage: "iphone.radiowaves.left.and.right")
+                        .font(.headline)
+                    Text("Find iPhone on your watch plays a sound here. When Bridge is in the background, iOS needs permission to show that alert.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Allow Alerts") {
+                        Task {
+                            _ = await FindMyPhone.shared.requestPermission()
+                            status = await FindMyPhone.shared.authorizationStatus()
+                        }
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                .card()
+            } else if status == .denied {
+                VStack(alignment: .leading, spacing: 8) {
+                    Label("Find iPhone alerts are off", systemImage: "bell.slash.fill")
+                        .font(.headline)
+                        .foregroundStyle(.orange)
+                    Text("Your watch can only ring this iPhone while Bridge is open. To fix it, allow notifications for Bridge in Settings.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                    .buttonStyle(SecondaryButtonStyle())
+                }
+                .card()
+            }
+        }
+        .task(id: scenePhase) { status = await FindMyPhone.shared.authorizationStatus() }
     }
 }

@@ -80,6 +80,7 @@ internal object Bytes {
         private val out = java.io.ByteArrayOutputStream()
         fun u8(v: Int) = out.write(v and 0xFF)
         fun u16(v: Int) { u8(v ushr 8); u8(v) }
+        fun u32(v: Long) { for (shift in intArrayOf(24, 16, 8, 0)) u8((v ushr shift).toInt()) }
         fun str(s: String) {
             val b = SettingsCodec.utf8Prefix(s, 255)
             u8(b.size)
@@ -95,6 +96,7 @@ internal object Bytes {
             return b[p++].toInt() and 0xFF
         }
         fun u16() = (u8() shl 8) or u8()
+        fun u32(): Long = (0 until 4).fold(0L) { acc, _ -> (acc shl 8) or u8().toLong() }
         fun str(): String {
             val n = u8()
             require(p + n <= b.size) { "truncated string" }

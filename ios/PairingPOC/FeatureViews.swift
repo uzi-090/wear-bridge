@@ -1,4 +1,5 @@
 import SwiftUI
+import UserNotifications
 
 // MARK: - Find Watch
 
@@ -143,6 +144,7 @@ struct SettingsView: View {
     let link: WatchLink
     @State private var confirmForget = false
     @State private var iconsCleared = false
+    @State private var alerts: UNAuthorizationStatus?
 
     var body: some View {
         List {
@@ -153,6 +155,26 @@ struct SettingsView: View {
                 NavigationLink { CallsView(link: link) } label: {
                     Label("Calls", systemImage: "phone")
                 }
+            }
+
+            Section {
+                LabeledContent("Alerts", value: alertsText)
+                if alerts == .notDetermined {
+                    Button("Allow Alerts") {
+                        Task {
+                            _ = await FindMyPhone.shared.requestPermission()
+                            alerts = await FindMyPhone.shared.authorizationStatus()
+                        }
+                    }
+                } else if alerts == .denied {
+                    Button("Open Notification Settings") {
+                        if let url = URL(string: UIApplication.openNotificationSettingsURLString) { UIApplication.shared.open(url) }
+                    }
+                }
+            } header: {
+                Text("Find iPhone")
+            } footer: {
+                Text("When Bridge is in the background, your watch rings this iPhone with an alert. The ring switch and Focus still apply. If you swipe Bridge away, it can't ring until you open it again.")
             }
 
             Section {
@@ -188,10 +210,22 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
+        .task { alerts = await FindMyPhone.shared.authorizationStatus() }
         .confirmationDialog("Re-pair your watch?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Watch", role: .destructive, action: link.forgetWatch)
         } message: {
             Text("Then open Settings › Bluetooth, tap ⓘ next to your watch and choose Forget This Device, and set it up again from the home screen.")
+        }
+    }
+}
+
+private extension SettingsView {
+    var alertsText: String {
+        switch alerts {
+        case .authorized, .provisional, .ephemeral: "Allowed"
+        case .denied: "Off"
+        case .notDetermined: "Not set up"
+        default: "–"
         }
     }
 }

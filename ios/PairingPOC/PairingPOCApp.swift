@@ -22,6 +22,7 @@ struct PairingPOCApp: App {
                 FindingPhoneView { findMyPhone.found() }
             }
             .onChange(of: scenePhase) { _, phase in
+                DiagFile.append("app scenePhase=\(phase)")
                 if phase == .active { findMyPhone.appBecameActive() }
             }
         }
