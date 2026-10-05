@@ -21,10 +21,20 @@ class BridgeSettings(context: Context) {
         _endCallFromWatch.value = enabled
     }
 
-    private val _popupStyle = MutableStateFlow(
-        PopupStyle.entries.firstOrNull { it.name == prefs.getString(KEY_POPUP, null) }
-            ?: if (prefs.getBoolean(KEY_SUBTLE_LEGACY, false)) PopupStyle.SUBTLE else PopupStyle.FULL,
-    )
+    private val _popupStyle = MutableStateFlow(loadPopupStyle())
+
+    /**
+     * Unknown stored values (e.g. the removed "BANNER" style) mean Standard. The pre-enum boolean is
+     * migrated once and then deleted, so it can never override a later choice (found on hardware:
+     * a stale "subtle" flag silently turned pop-ups off).
+     */
+    private fun loadPopupStyle(): PopupStyle {
+        val stored = prefs.getString(KEY_POPUP, null)
+        val style = PopupStyle.entries.firstOrNull { it.name == stored }
+            ?: if (stored == null && prefs.getBoolean(KEY_SUBTLE_LEGACY, false)) PopupStyle.SUBTLE else PopupStyle.FULL
+        prefs.edit().putString(KEY_POPUP, style.name).remove(KEY_SUBTLE_LEGACY).apply()
+        return style
+    }
 
     /** How alerting notifications appear. See [PopupStyle]. */
     val popupStyle: StateFlow<PopupStyle> = _popupStyle
