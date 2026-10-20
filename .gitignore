@@ -5,8 +5,19 @@ wearos/.kotlin/
 wearos/**/build/
 wearos/local.properties
 *.apk
+*.aab
+*.jks
+*.keystore
 # Xcode
 ios/**/*.xcodeproj/
 ios/**/xcuserdata/
 ios/build/
 DerivedData/
+*.mobileprovision
+*.p12
+# IDEs
+.idea/
+.vscode/
+# Raw hardware QA evidence: device logs and screenshots contain device identifiers,
+# signing identities and local paths. Kept locally, not published.
+docs/qa-*/

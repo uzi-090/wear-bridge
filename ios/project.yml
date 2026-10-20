@@ -56,6 +56,17 @@ targets:
       base:
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_STRICT_CONCURRENCY: complete
+  PairingPOCUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - PairingPOCUITests
+    dependencies:
+      - target: PairingPOC
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: PairingPOC
 schemes:
   PairingPOC:
     build:
@@ -65,3 +76,11 @@ schemes:
     test:
       targets:
         - PairingPOCTests
+  PairingHardwareQA:
+    build:
+      targets:
+        PairingPOC: all
+        PairingPOCUITests: [test]
+    test:
+      targets:
+        - PairingPOCUITests
