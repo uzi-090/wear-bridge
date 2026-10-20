@@ -44,10 +44,10 @@ class BridgeTileService : TileService() {
 
     override fun onTileRequest(requestParams: RequestBuilders.TileRequest): ListenableFuture<TileBuilders.Tile> =
         SuspendToFutureAdapter.launchFuture {
-            when (requestParams.currentState.lastClickableId) {
-                ID_TOGGLE -> BridgeGraph.mediaCommand(RemoteCommand.TOGGLE_PLAY_PAUSE)
-                ID_PREVIOUS -> BridgeGraph.mediaCommand(RemoteCommand.PREVIOUS_TRACK)
-                ID_NEXT -> BridgeGraph.mediaCommand(RemoteCommand.NEXT_TRACK)
+            when (requestParams.currentState.lastClickableId.takeIf { BridgeGraph.featuresAvailable }) {
+                ID_TOGGLE -> BridgeGraph.media.value?.playPauseCommand?.let(BridgeGraph::mediaCommand)
+                ID_PREVIOUS -> sendIfSupported(RemoteCommand.PREVIOUS_TRACK)
+                ID_NEXT -> sendIfSupported(RemoteCommand.NEXT_TRACK)
             }
             TileBuilders.Tile.Builder()
                 .setResourcesVersion(resourcesVersion())
@@ -74,9 +74,14 @@ class BridgeTileService : TileService() {
             resources.build()
         }
 
+    private fun sendIfSupported(command: RemoteCommand) {
+        if (BridgeGraph.media.value?.can(command) == true) BridgeGraph.mediaCommand(command)
+    }
+
     /** The app behind the current player, resolved the same way as the media screen. */
     private fun playingApp(): AppInfo? {
-        val media = BridgeGraph.media.value?.takeIf { it.hasPlayer } ?: return null
+        if (!BridgeGraph.featuresAvailable) return null
+        val media = BridgeGraph.media.value?.takeIf { it.hasMediaSession } ?: return null
         return AppCatalog.forPlayerName(media.playerName, BridgeGraph.policy.seenApps.value)
     }
 
@@ -112,11 +117,11 @@ class BridgeTileService : TileService() {
      */
     private fun layout(context: Context, request: RequestBuilders.TileRequest): LayoutElementBuilders.LayoutElement {
         val link = BridgeGraph.link.value
-        val ready = link.state == LinkState.READY
+        val ready = BridgeGraph.featuresAvailable
         val battery = BridgeGraph.phoneBattery.value
         val charging = ready && BridgeGraph.phoneCharging.value == true
         val alerts = BridgeGraph.repository.items.value.size
-        val media = BridgeGraph.media.value?.takeIf { it.hasPlayer }
+        val media = BridgeGraph.media.value?.takeIf { it.hasMediaSession }
         val app = playingApp()
         val screen = request.deviceConfiguration.screenWidthDp.toFloat().takeIf { it > 0f } ?: 225f
         val s = screen / 225f
@@ -129,8 +134,7 @@ class BridgeTileService : TileService() {
         val onAccent = if (luminance(accent) > 0.5f) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
 
         return materialScope(context, request.deviceConfiguration, allowDynamicTheme = false, defaultColorScheme = BRIDGE_NIGHT) {
-            // Offline, the same two pills say what's wrong (where the media was) and show the alerts
-            // saved on the watch (where the battery was, which is unknown without the link).
+            // Offline, show only connection and pairing guidance, never saved peer content.
             val mediaPill = when {
                 !ready -> pill(pillWidth, pillHeight, PILL, open(context, "home", "link"), padH = 12f * s, content = connection(link, s))
                 media == null -> pill(pillWidth, pillHeight, PILL, open(context, "media", "media_card"), padH = 12f * s, content = nothingPlaying(s))
@@ -196,7 +200,7 @@ class BridgeTileService : TileService() {
             .addContent(content)
             .build()
 
-    /** Logo + song (scrolls if long), then previous · play/pause · next. */
+    /** Logo + song (ellipsized if long), then previous · play/pause · next. */
     private fun MaterialScope.mediaContent(media: NowPlaying, s: Float, playColors: ButtonColors): LayoutElementBuilders.LayoutElement {
         val song = LayoutElementBuilders.Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
@@ -213,18 +217,18 @@ class BridgeTileService : TileService() {
                     media.title.ifBlank { "Unknown title" }.layoutString,
                     typography = Typography.TITLE_SMALL,
                     maxLines = 1,
-                    overflow = LayoutElementBuilders.TEXT_OVERFLOW_MARQUEE,
+                    overflow = LayoutElementBuilders.TEXT_OVERFLOW_ELLIPSIZE_END,
                 ),
             )
             .build()
         val clear = ButtonColors(LayoutColor(0x00000000), colorScheme.onSurface, colorScheme.onSurface, colorScheme.onSurface)
         val controls = LayoutElementBuilders.Row.Builder()
             .setVerticalAlignment(LayoutElementBuilders.VERTICAL_ALIGN_CENTER)
-            .addContent(control(ID_PREVIOUS, IMG_PREVIOUS, clear, 32f * s))
+            .addContent(control(ID_PREVIOUS, IMG_PREVIOUS, clear, 32f * s, media.can(RemoteCommand.PREVIOUS_TRACK)))
             .addContent(hSpace(14f * s))
-            .addContent(control(ID_TOGGLE, if (media.isPlaying) IMG_PAUSE else IMG_PLAY, playColors, 40f * s))
+            .addContent(control(ID_TOGGLE, if (media.isPlaying) IMG_PAUSE else IMG_PLAY, playColors, 40f * s, media.playPauseCommand != null))
             .addContent(hSpace(14f * s))
-            .addContent(control(ID_NEXT, IMG_NEXT, clear, 32f * s))
+            .addContent(control(ID_NEXT, IMG_NEXT, clear, 32f * s, media.can(RemoteCommand.NEXT_TRACK)))
             .build()
         return LayoutElementBuilders.Column.Builder()
             .setWidth(DimensionBuilders.expand())
@@ -236,10 +240,12 @@ class BridgeTileService : TileService() {
     }
 
     /** A media control that acts on the tile itself: a load action handled in [onTileRequest]. */
-    private fun MaterialScope.control(id: String, img: String, colors: ButtonColors, size: Float) =
+    private fun MaterialScope.control(id: String, img: String, colors: ButtonColors, size: Float, enabled: Boolean) =
         iconButton(
-            onClick = ModifiersBuilders.Clickable.Builder().setId(id).setOnClick(ActionBuilders.LoadAction.Builder().build()).build(),
-            iconContent = { icon(img) },
+            onClick = ModifiersBuilders.Clickable.Builder().setId(if (enabled) id else "disabled_$id").apply {
+                if (enabled) setOnClick(ActionBuilders.LoadAction.Builder().build())
+            }.build(),
+            iconContent = { if (enabled) icon(img) else icon(img, tintColor = LayoutColor(0xFF66666A.toInt())) },
             width = DimensionBuilders.dp(size),
             height = DimensionBuilders.dp(size),
             colors = colors,
@@ -303,14 +309,14 @@ class BridgeTileService : TileService() {
         )
     }
 
-    /** Offline: the alerts kept on the watch. No Find iPhone here: it needs the link, so the text gets the room. */
+    /** Offline: pairing guidance without cached counts or device controls. */
     private fun MaterialScope.offlineStatus(s: Float, alerts: Int): LayoutElementBuilders.LayoutElement =
         badgeRow(
             s,
             badge = circle(50f * s, BADGE, icon(IMG_BELL, tintColor = colorScheme.onSurfaceVariant)),
-            line1 = text((if (alerts > 99) "99+" else "$alerts").layoutString, typography = Typography.TITLE_LARGE, maxLines = 1,
+            line1 = text((if (BridgeGraph.pairing.state.value.phase == io.wearbridge.watch.ble.PairingPhase.PAIRED) "Paired" else "Unpaired").layoutString, typography = Typography.TITLE_LARGE, maxLines = 1,
                 alignment = LayoutElementBuilders.TEXT_ALIGN_START),
-            line2 = text((if (alerts == 1) "alert on watch" else "alerts on watch").layoutString, typography = Typography.LABEL_SMALL,
+            line2 = text("Open Bridge".layoutString, typography = Typography.LABEL_SMALL,
                 color = colorScheme.onSurfaceVariant, maxLines = 1, alignment = LayoutElementBuilders.TEXT_ALIGN_START),
         )
 

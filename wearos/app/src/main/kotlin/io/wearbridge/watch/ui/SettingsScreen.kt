@@ -84,12 +84,6 @@ fun SettingsScreen(onOpenDiagnostics: () -> Unit) {
             )
         }
 
-        item { SectionHeader("Security", spec) }
-        item {
-            NavButton(spec, R.drawable.ic_lock, "Forget iPhone app", "It will need your OK again", iconTint = BridgePalette.Destructive) {
-                BridgeGraph.forgetIphoneApps()
-            }
-        }
 
         item { SectionHeader("About", spec) }
         item { NavButton(spec, R.drawable.ic_info, "Diagnostics", "Connection details for troubleshooting", onClick = onOpenDiagnostics) }

@@ -27,6 +27,14 @@ class PolicyStore(context: Context) {
     )
     val seenApps: StateFlow<Map<String, String>> = _seenApps
 
+    fun forgetDevice() {
+        check(prefs.edit().clear().commit())
+        _mode.value = FilterMode.ALL
+        _rules.value = emptyMap()
+        _seenApps.value = emptyMap()
+        _mediaApps.value = emptyMap()
+    }
+
     fun setMode(mode: FilterMode) {
         prefs.edit().putString(KEY_MODE, mode.name).apply()
         _mode.value = mode

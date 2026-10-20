@@ -26,7 +26,7 @@ struct SecurityCard: View {
                 Label("Your watch didn't allow this app", systemImage: "hand.raised.fill")
                     .font(.headline)
                     .foregroundStyle(.orange)
-                Text("Until it does, settings and Find can't reach your watch. Notifications, calls and music keep working.")
+                Text("Device features stay unavailable until you approve pairing on the watch.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button("Ask Again", action: link.retryAuthorization).buttonStyle(SecondaryButtonStyle())

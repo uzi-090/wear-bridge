@@ -113,10 +113,31 @@ enum BridgeIdentity {
     private static let account = "iphone-app-key"
     private static let pinnedWatchKey = "bridge.watch.publicKey"
 
-    static func privateKey() -> P256.KeyAgreement.PrivateKey {
-        if let raw = load(), let key = try? P256.KeyAgreement.PrivateKey(rawRepresentation: raw) { return key }
+    /// nil while the Keychain can't be read (before the first unlock after a restart). A key is only
+    /// created when none exists: a stand-in key looks like a different app to the watch, which then
+    /// revokes this app's approval (and it could overwrite the real key).
+    static func privateKey() -> P256.KeyAgreement.PrivateKey? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+        ]
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        if status == errSecSuccess, let raw = out as? Data, let key = try? P256.KeyAgreement.PrivateKey(rawRepresentation: raw) {
+            return key
+        }
+        guard status == errSecSuccess || status == errSecItemNotFound else { return nil } // locked: try again later
         let key = P256.KeyAgreement.PrivateKey()
-        save(key.rawRepresentation)
+        return save(key.rawRepresentation) == errSecSuccess ? key : nil
+    }
+
+    /// Replaces this app's pairing identity so even an offline peer cannot silently reuse old approval.
+    static func replacePairingIdentity() throws -> P256.KeyAgreement.PrivateKey {
+        let key = P256.KeyAgreement.PrivateKey()
+        let status = save(key.rawRepresentation)
+        guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
         return key
     }
 
@@ -125,19 +146,7 @@ enum BridgeIdentity {
         set { UserDefaults.standard.set(newValue, forKey: pinnedWatchKey) }
     }
 
-    private static func load() -> Data? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-        ]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess else { return nil }
-        return out as? Data
-    }
-
-    private static func save(_ data: Data) {
+    private static func save(_ data: Data) -> OSStatus {
         let base: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -147,6 +156,6 @@ enum BridgeIdentity {
         var add = base
         add[kSecValueData as String] = data
         add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        SecItemAdd(add as CFDictionary, nil)
+        return SecItemAdd(add as CFDictionary, nil)
     }
 }

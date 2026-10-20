@@ -37,8 +37,11 @@ class GattSession(
     /** [services] are the iPhone's GATT service UUIDs (public Bluetooth SIG / Apple service IDs, not personal data). */
     data class Discovery(val ok: Boolean, val status: Int, val hasAncs: Boolean, val serviceCount: Int, val services: List<UUID> = emptyList())
 
-    val queue = GattOpQueue()
-    private var gatt: BluetoothGatt? = null
+    val queue = GattOpQueue {
+        close()
+        listener.onDisconnected(this, GattOpQueue.STATUS_TIMEOUT)
+    }
+    @Volatile private var gatt: BluetoothGatt? = null
 
     /** Connects the client and requests a larger MTU. Returns the connect status (0 = success). */
     suspend fun connect(): Int {
@@ -48,9 +51,9 @@ class GattSession(
             gatt != null
         }
         if (!r.ok) return r.status
-        // A larger MTU means fewer Data Source fragments. iOS usually grants 185. A failure is harmless.
-        queue.run(GattOpQueue.Kind.MTU, timeoutMs = 5_000) { gatt?.requestMtu(185) == true }
-        return 0
+        // A rejected MTU request can use the existing size. A timeout must invalidate the session.
+        val mtu = queue.run(GattOpQueue.Kind.MTU, timeoutMs = 5_000) { gatt?.requestMtu(185) == true }
+        return if (mtu.status == GattOpQueue.STATUS_TIMEOUT || mtu.status == GattOpQueue.STATUS_DISCONNECTED) mtu.status else 0
     }
 
     suspend fun discover(): Discovery {
@@ -79,6 +82,7 @@ class GattSession(
 
     private val callback = object : BluetoothGattCallback() {
         override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+            if (g !== gatt) return
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> queue.complete(GattOpQueue.Kind.CONNECT, status)
                 BluetoothProfile.STATE_DISCONNECTED -> {
@@ -89,41 +93,45 @@ class GattSession(
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (g !== gatt) return
             if (status == BluetoothGatt.GATT_SUCCESS) listener.onMtu(this@GattSession, mtu)
             queue.complete(GattOpQueue.Kind.MTU, status)
         }
 
-        override fun onServicesDiscovered(g: BluetoothGatt, status: Int) = queue.complete(GattOpQueue.Kind.DISCOVER, status)
+        override fun onServicesDiscovered(g: BluetoothGatt, status: Int) { if (g === gatt) queue.complete(GattOpQueue.Kind.DISCOVER, status) }
 
-        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) =
-            queue.complete(GattOpQueue.Kind.WRITE_DESCRIPTOR, status)
+        override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (g === gatt) queue.complete(GattOpQueue.Kind.WRITE_DESCRIPTOR, status, target = "${d.characteristic.uuid}/${d.uuid}")
+        }
 
-        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) =
-            queue.complete(GattOpQueue.Kind.WRITE_CHARACTERISTIC, status)
+        override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (g === gatt) queue.complete(GattOpQueue.Kind.WRITE_CHARACTERISTIC, status, target = c.uuid.toString())
+        }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
-            listener.onCharacteristicChanged(this@GattSession, c.uuid, value.copyOf())
+            if (g === gatt) listener.onCharacteristicChanged(this@GattSession, c.uuid, value.copyOf())
         }
 
         @Deprecated("Pre-API 33 delivery path")
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            if (g === gatt && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
                 listener.onCharacteristicChanged(this@GattSession, c.uuid, c.value.copyOf())
             }
         }
 
-        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) =
-            queue.complete(GattOpQueue.Kind.READ_CHARACTERISTIC, status, value.copyOf())
+        override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            if (g === gatt) queue.complete(GattOpQueue.Kind.READ_CHARACTERISTIC, status, value.copyOf(), c.uuid.toString())
+        }
 
         @Deprecated("Pre-API 33 delivery path")
         @Suppress("DEPRECATION")
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                queue.complete(GattOpQueue.Kind.READ_CHARACTERISTIC, status, c.value?.copyOf())
+            if (g === gatt && Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                queue.complete(GattOpQueue.Kind.READ_CHARACTERISTIC, status, c.value?.copyOf(), c.uuid.toString())
             }
         }
 
-        override fun onServiceChanged(g: BluetoothGatt) = listener.onServiceChanged(this@GattSession)
+        override fun onServiceChanged(g: BluetoothGatt) { if (g === gatt) listener.onServiceChanged(this@GattSession) }
     }
 }

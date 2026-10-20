@@ -60,7 +60,10 @@ class NotificationRepository(
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     private val _items = MutableStateFlow<List<WatchNotification>>(emptyList())
-    val items: StateFlow<List<WatchNotification>> = _items
+    val items: StateFlow<List<WatchNotification>> get() {
+        expireHistory()
+        return _items
+    }
 
     private val _incomingCall = MutableStateFlow<WatchNotification?>(null)
     val incomingCall: StateFlow<WatchNotification?> = _incomingCall
@@ -77,16 +80,32 @@ class NotificationRepository(
      * so they're remembered for this process and not shown again. Bounded, oldest dropped first.
      */
     private val deleted = LinkedHashSet<Long>()
+    private val invalidatedCalls = LinkedHashSet<Long>()
+
+    /** Deletes all peer content and action state, including calls and replay tombstones. */
+    fun forgetDevice() {
+        _items.value = emptyList()
+        _incomingCall.value = null
+        _activeCall.value = null
+        _actionStatus.value = null
+        synchronized(deleted) { deleted.clear() }
+        synchronized(invalidatedCalls) { invalidatedCalls.clear() }
+    }
 
     fun upsert(n: WatchNotification) {
+        synchronized(invalidatedCalls) { invalidatedCalls.remove(n.uid) }
         _items.update { list ->
-            (listOf(n) + list.filterNot { it.uid == n.uid })
+            // Active calls belong to the call surface, not the generic notification inbox.
+            ((if (n.isActiveCall) emptyList() else listOf(n)) + list.filterNot { it.uid == n.uid })
                 .let(::expire)
                 .sortedByDescending { it.timeMillis }
                 .take(MAX_ITEMS)
         }
         if (n.isIncomingCall) _incomingCall.value = n
         if (n.isActiveCall) _activeCall.value = n
+        // Providers can change category on the same UID instead of removing and adding a call.
+        if (!n.isIncomingCall && _incomingCall.value?.uid == n.uid) _incomingCall.value = null
+        if (!n.isActiveCall && _activeCall.value?.uid == n.uid) _activeCall.value = null
     }
 
     /** iOS removed it (cleared on the iPhone, or the call ended). Kept as history when that's on. */
@@ -106,7 +125,33 @@ class NotificationRepository(
         synchronized(deleted) { deleted.remove(uid) }
     }
 
-    fun get(uid: Long): WatchNotification? = _items.value.firstOrNull { it.uid == uid }
+    fun get(uid: Long): WatchNotification? {
+        expireHistory()
+        return _items.value.firstOrNull { it.uid == uid } ?: _activeCall.value?.takeIf { it.uid == uid }
+    }
+
+    fun expireHistory() { _items.update(::expire) }
+
+    /** Policy changes are local removal, never evidence of an action on the iPhone. */
+    fun discard(uid: Long) {
+        if (_incomingCall.value?.uid == uid || _activeCall.value?.uid == uid) invalidateCall(uid)
+        _items.update { list -> list.filterNot { it.uid == uid } }
+        if (_incomingCall.value?.uid == uid) _incomingCall.value = null
+        if (_activeCall.value?.uid == uid) _activeCall.value = null
+    }
+
+    fun setMasked(uid: Long, masked: Boolean) {
+        _items.update { list -> list.mapNotNull { n ->
+            if (n.uid != uid) n else if (masked && n.clearedOnPhone) null else n.copy(masked = masked)
+        } }
+    }
+
+    fun wasCallInvalidated(uid: Long): Boolean = synchronized(invalidatedCalls) { uid in invalidatedCalls }
+
+    private fun invalidateCall(uid: Long) = synchronized(invalidatedCalls) {
+        invalidatedCalls.add(uid)
+        while (invalidatedCalls.size > MAX_ITEMS) invalidatedCalls.remove(invalidatedCalls.first())
+    }
 
     /** Removes it from the watch only. The iPhone keeps it (that needs iOS's own action, e.g. "Clear"). */
     fun delete(uid: Long) {
@@ -143,6 +188,8 @@ class NotificationRepository(
 
     /** On disconnect: keep the content visible, but actions are disabled until iOS replays it. */
     fun markAllStale() {
+        _incomingCall.value?.let { invalidateCall(it.uid) }
+        _activeCall.value?.let { invalidateCall(it.uid) }
         _items.update { list -> list.map { if (it.clearedOnPhone) it else it.copy(stale = true) } }
         _incomingCall.value = null // a ringing call can't be acted on any more
         _activeCall.value = null

@@ -32,6 +32,23 @@ class NotificationRepositoryTest {
         masked = masked,
     )
 
+    @Test fun forgettingDeviceClearsHistoryCallsActionsAndReplayIds() {
+        history = true
+        repo.upsert(n(1)); repo.remove(1)
+        repo.upsert(n(2)); repo.delete(2)
+        repo.upsert(n(3, category = Category.INCOMING_CALL))
+        repo.upsert(n(4, category = Category.ACTIVE_CALL))
+        repo.setActionStatus(ActionStatus(3, io.wearbridge.ancs.ActionId.POSITIVE, ActionStatus.State.SENDING))
+        repo.forgetDevice()
+        assertTrue(repo.items.value.isEmpty())
+        assertNull(repo.incomingCall.value)
+        assertNull(repo.activeCall.value)
+        assertNull(repo.actionStatus.value)
+        assertFalse(repo.isDeleted(2))
+        repo.upsert(n(2))
+        assertEquals(listOf(2L), repo.items.value.map { it.uid })
+    }
+
     @Test
     fun removedByIphoneIsDroppedWhenHistoryIsOff() {
         repo.upsert(n(1))
@@ -127,5 +144,59 @@ class NotificationRepositoryTest {
         repo.upsert(n(1, title = "Bank A", masked = true))
         repo.upsert(n(2, title = "Bank B", masked = true))
         assertEquals(1, NotificationRepository.threads(repo.items.value).size)
+    }
+
+    @Test
+    fun sameUidCanTransitionFromRingingToActiveForEveryProvider() {
+        for (provider in listOf("com.apple.mobilephone", "net.whatsapp.WhatsApp", "com.apple.facetime", "test.voip")) {
+            repo.upsert(n(1, app = provider, category = Category.INCOMING_CALL))
+            repo.upsert(n(1, app = provider, category = Category.ACTIVE_CALL))
+            assertNull(repo.incomingCall.value)
+            assertEquals(1L, repo.activeCall.value?.uid)
+            repo.upsert(n(1, app = provider, category = Category.MISSED_CALL))
+            assertNull(repo.incomingCall.value)
+            assertNull(repo.activeCall.value)
+        }
+    }
+
+    @Test
+    fun updatingAnotherCallDoesNotClearWaitingCall() {
+        repo.upsert(n(1, category = Category.INCOMING_CALL))
+        repo.upsert(n(2, category = Category.ACTIVE_CALL))
+        repo.upsert(n(2, category = Category.MISSED_CALL))
+        assertEquals(1L, repo.incomingCall.value?.uid)
+        assertNull(repo.activeCall.value)
+    }
+
+    @Test
+    fun activeCallIsAvailableForControlButNotInGenericInbox() {
+        repo.upsert(n(1, category = Category.ACTIVE_CALL))
+        assertTrue(repo.items.value.isEmpty())
+        assertEquals(Category.ACTIVE_CALL, repo.get(1)?.ancs?.category)
+        repo.remove(1)
+        assertNull(repo.get(1))
+    }
+    @Test fun historyExpiresOnReadWithoutAnotherNotification() {
+        history = true; repo.upsert(n(1)); repo.remove(1)
+        clock += NotificationRepository.HISTORY_TTL_MS + 1
+        assertNull(repo.get(1)); assertTrue(repo.items.value.isEmpty())
+    }
+    @Test fun timerExpiryUpdatesExistingSubscriberFlow() {
+        history = true; repo.upsert(n(1)); repo.remove(1)
+        val flow = repo.items
+        clock += NotificationRepository.HISTORY_TTL_MS + 1
+        repo.expireHistory()
+        assertTrue(flow.value.isEmpty())
+    }
+    @Test fun newlyMaskedPolicyRemovesPreviouslyRetainedContent() {
+        history = true; repo.upsert(n(1)); repo.remove(1)
+        repo.setMasked(1, true)
+        assertNull(repo.get(1))
+    }
+    @Test fun disabledCallIsInvalidatedWithoutPhoneHandledInference() {
+        repo.upsert(n(1, category = Category.INCOMING_CALL)); repo.discard(1)
+        assertNull(repo.incomingCall.value); assertTrue(repo.wasCallInvalidated(1))
+        repo.upsert(n(1, category = Category.INCOMING_CALL))
+        assertFalse(repo.wasCallInvalidated(1))
     }
 }

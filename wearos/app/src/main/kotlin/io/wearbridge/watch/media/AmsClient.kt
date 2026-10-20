@@ -54,7 +54,7 @@ class AmsClient(
             AmsCommands.register(EntityId.TRACK, TrackAttribute.ARTIST, TrackAttribute.ALBUM, TrackAttribute.TITLE, TrackAttribute.DURATION),
         )
         for (payload in registrations) {
-            val r = queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC) {
+            val r = queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC, target = eu.uuid.toString()) {
                 gatt.writeCharacteristicCompat(eu, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
             }
             if (!r.ok) return false
@@ -69,14 +69,21 @@ class AmsClient(
     /** Returns true if this client consumed the notification. */
     suspend fun onCharacteristicChanged(uuid: UUID, value: ByteArray): Boolean {
         when (uuid) {
-            AmsUuids.REMOTE_COMMAND -> publish(state.copy(supported = AmsCommands.parseSupported(value)))
+            AmsUuids.REMOTE_COMMAND -> publish(state.copy(supported = AmsCommands.parseSupported(value), commandsKnown = true))
             AmsUuids.ENTITY_UPDATE -> {
                 val u = EntityUpdate.parse(value) ?: return true
                 if (u.entity == EntityId.PLAYER && u.attribute == PlayerAttribute.NAME) {
                     // The playing app's display name (not personal data): needed to verify logo matching.
                     io.wearbridge.watch.diagnostics.DiagLog.i("ams player name='${u.value}' truncated=${u.truncated}")
                 }
+                val playerChanged = u.entity == EntityId.PLAYER && u.attribute == PlayerAttribute.NAME &&
+                    u.value.isNotBlank() && u.value != state.playerName
                 publish(state.apply(u, SystemClock.elapsedRealtime()))
+                if (playerChanged) {
+                    for ((entity, attribute) in INITIAL_READS) {
+                        if (entity != EntityId.PLAYER || attribute != PlayerAttribute.NAME) fetchFull(entity, attribute)
+                    }
+                }
                 if (u.truncated && u.attribute in FETCH_FULL[u.entity].orEmpty()) fetchFull(u.entity, u.attribute)
                 // A new track: iOS doesn't always send every attribute with it (seen on hardware: an Apple Music
                 // track arrived without its duration). Read the duration, and the player name if unknown.
@@ -92,9 +99,9 @@ class AmsClient(
 
     suspend fun send(command: RemoteCommand): CommandResult {
         val rc = remoteCommand ?: return CommandResult.FAILED
-        // iOS lists what the current player supports. An empty list means "unknown", so try anyway.
-        if (state.supported.isNotEmpty() && command !in state.supported) return CommandResult.NOT_SUPPORTED
-        val r = queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC) {
+        // An explicit empty supported-command update means no controls are available.
+        if (!state.can(command)) return CommandResult.NOT_SUPPORTED
+        val r = queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC, target = rc.uuid.toString()) {
             gatt.writeCharacteristicCompat(rc, AmsCommands.command(command), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
         }
         return when {
@@ -107,7 +114,7 @@ class AmsClient(
     /** A long title or artist arrives truncated to one packet: read the whole value through Entity Attribute. */
     private suspend fun fetchFull(entity: Int, attribute: Int) {
         val ea = entityAttribute ?: return
-        val selected = queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC) {
+        val selected = queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC, target = ea.uuid.toString()) {
             gatt.writeCharacteristicCompat(ea, AmsCommands.selectAttribute(entity, attribute), BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
         }
         if (!selected.ok) return

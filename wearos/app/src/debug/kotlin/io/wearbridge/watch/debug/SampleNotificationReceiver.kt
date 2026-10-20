@@ -21,6 +21,11 @@ import java.time.LocalDateTime
  */
 class SampleNotificationReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // Debug-only native alert probe; never changes the real phone battery reading.
+        if (intent.hasExtra("phone_battery")) {
+            io.wearbridge.watch.battery.LowBatteryAlerts.receive(context, "qa-phone", intent.getIntExtra("phone_battery", -1), intent.getBooleanExtra("phone_charging", false))
+            return
+        }
         // Optional extra "style": BANNER / FULL / SUBTLE, to test pop-up styles from adb.
         intent.getStringExtra("style")?.let { name ->
             io.wearbridge.watch.settings.PopupStyle.entries.firstOrNull { it.name == name }

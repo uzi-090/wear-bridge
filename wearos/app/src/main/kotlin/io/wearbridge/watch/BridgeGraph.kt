@@ -52,6 +52,10 @@ object BridgeGraph {
         private set
     lateinit var contacts: ContactsStore
         private set
+    lateinit var pairing: io.wearbridge.watch.ble.PairingStore
+        private set
+    val featuresAvailable: Boolean get() = pairing.state.value.canAccess(link.value)
+
     lateinit var calls: io.wearbridge.watch.calls.CallController
         private set
 
@@ -117,10 +121,18 @@ object BridgeGraph {
         repository = NotificationRepository(historyEnabled = { settings.history.value })
         policy = PolicyStore(app)
         icons = AppIconStore(app).also { store -> Thread({ store.prewarm() }, "icon-prewarm").apply { priority = Thread.MIN_PRIORITY }.start() }
-        notifier = MirrorNotifier(app, settings).also { it.createChannels() }
+        notifier = MirrorNotifier(app, settings).also { it.createChannels(); it.clearOrphans() }
         findWatch = FindWatchAlert(app).also { it.createChannel() }
         identity = IdentityStore(app)
+        pairing = io.wearbridge.watch.ble.PairingStore(app, identity.trusted.value.isNotEmpty())
         contacts = ContactsStore(app)
+        if (pairing.cleanupPending.value) {
+            val forget = pairing.pendingRemovalForget == true
+            val cleaned = cleanRemovedDeviceData()
+            pairing.completeRemoval(forget, cleaned)
+            pairing.setNotice(if (cleaned) "Device removal completed after restart. Pair and approve again to use features."
+                else "Unpaired. Saved data cleanup is unfinished. Try Forget Device again before pairing.")
+        } else if (pairing.state.value.phase != io.wearbridge.watch.ble.PairingPhase.PAIRED) identity.forgetAll()
         calls = io.wearbridge.watch.calls.CallController(app).also { it.start() }
         io.wearbridge.watch.tile.TileRefresher.start(app)
         approvals = ApprovalNotifier(app).also { it.createChannel() }
@@ -155,6 +167,8 @@ object BridgeGraph {
     }
 
     fun performAction(uid: Long, action: ActionId) {
+        if (!featuresAvailable) return
+        calls.actionFromWatch(uid, action)
         val c = controller
         if (c == null) {
             repository.setActionStatus(ActionStatus(uid, action, ActionStatus.State.UNAVAILABLE))
@@ -187,21 +201,58 @@ object BridgeGraph {
         controller?.approveIphoneApp(allow)
     }
 
-    /** Forgets every allowed iPhone app. The current connection is reset, so the iPhone app asks again. */
-    fun forgetIphoneApps() {
-        identity.forgetAll()
-        controller?.reconnect()
+    /**
+     * Starts setup: the watch becomes visible and accepts the iPhone app after a matching-code approval.
+     * The state is set here, synchronously, and the service is always (re)started: a service that is
+     * still shutting down after a removal would otherwise swallow the request.
+     */
+    fun pairIphone(context: Context) {
+        val current = pairing.state.value
+        if (pairing.cleanupPending.value || current.phase != io.wearbridge.watch.ble.PairingPhase.UNPAIRED) return
+        pairing.setNotice(null)
+        pairing.set(current.begin())
+        controller?.pairDevice()
+        io.wearbridge.watch.service.BridgeService.start(context)
+    }
+    fun unpairIphone() = removeIphone(false)
+    fun forgetIphone() = removeIphone(true)
+
+    private fun removeIphone(forget: Boolean) {
+        val c = controller
+        if (c != null) { c.removeDevice(forget); return }
+        // A reboot/startup restriction may leave a paired device without a running service.
+        // Its removal must still work locally and must not start Bluetooth just to erase data.
+        val from = pairing.state.value.phase
+        pairing.beginRemoval(forget)
+        val cleaned = cleanRemovedDeviceData()
+        pairing.completeRemoval(forget, cleaned)
+        pairing.setNotice(when {
+            !cleaned -> "Unpaired. Some saved data could not be deleted. Try Forget Device again."
+            from == io.wearbridge.watch.ble.PairingPhase.UNPAIRED -> "Saved iPhone removed."
+            from == io.wearbridge.watch.ble.PairingPhase.PAIRING -> if (forget) "Pairing cancelled. Saved iPhone removed." else "Pairing cancelled."
+            forget -> "Forgotten on this watch. Forget this watch in Bridge on the iPhone too."
+            else -> "Unpaired on this watch. Unpair this watch in Bridge on the iPhone too."
+        })
+    }
+
+    internal fun cleanRemovedDeviceData(): Boolean {
+        var failed = false
+        listOf<() -> Unit>(identity::forgetAll, contacts::forgetDevice, repository::forgetDevice,
+            policy::forgetDevice, icons::clear).forEach { cleanup ->
+            runCatching(cleanup).onFailure { failed = true }
+        }
+        return !failed
     }
 
     /** Asks the iPhone app to offer this call. The user confirms on the iPhone (iOS doesn't let apps dial silently). */
     fun callFromIphone(phone: String, name: String) {
-        val c = controller
+        val c = controller.takeIf { featuresAvailable }
         if (c == null) callRequestFlow.value = CallRequestState.NO_APP else c.callFromIphone(phone, name)
     }
 
     /** Rings the iPhone (best effort: needs the iPhone app alive in the background). */
     fun findPhone(ring: Boolean) {
-        val c = controller
+        val c = controller.takeIf { featuresAvailable }
         if (c == null) findPhoneFlow.value = FindPhoneState.NO_LINK else c.findPhone(ring)
     }
 
@@ -211,7 +262,7 @@ object BridgeGraph {
 
     fun mediaCommand(command: RemoteCommand) {
         if (demoMode) return applyDemoMedia(command) // debug screenshots must never touch the real iPhone
-        controller?.mediaCommand(command)
+        if (featuresAvailable) controller?.mediaCommand(command)
     }
 
     private fun applyDemoMedia(command: RemoteCommand) {

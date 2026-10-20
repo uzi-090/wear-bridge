@@ -15,6 +15,7 @@ final class AppIconService {
     private(set) var icons: [String: Data] = [:]
 
     @ObservationIgnored private var inFlight: Set<String> = []
+    @ObservationIgnored private var cacheEpoch = 0
     @ObservationIgnored private let dir: URL = {
         let d = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("AppIcons")
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
@@ -27,15 +28,25 @@ final class AppIconService {
     func isLookupable(_ bundleId: String) -> Bool { !bundleId.hasPrefix("com.apple.") }
 
     /// Privacy control: forgets every cached icon (and the record of which apps were looked up).
-    func clearCache() {
+    @discardableResult
+    func clearCache() -> Bool {
+        cacheEpoch += 1
         icons.removeAll()
-        if let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
-            files.forEach { try? FileManager.default.removeItem(at: $0) }
+        do {
+            if FileManager.default.fileExists(atPath: dir.path) {
+                for file in try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+                    try FileManager.default.removeItem(at: file)
+                }
+            }
+            return true
+        } catch {
+            return false
         }
     }
 
     /// Cached icon, or fetches it. Returns nil if the App Store doesn't have the app.
     func icon(for bundleId: String) async -> Data? {
+        let epoch = cacheEpoch
         if let cached = icons[bundleId] { return cached }
         let file = dir.appendingPathComponent(safe(bundleId) + ".jpg")
         if let data = try? Data(contentsOf: file) {
@@ -54,10 +65,12 @@ final class AppIconService {
             guard let artwork = await lookupArtwork(bundleId: bundleId, country: country),
                   let (raw, _) = try? await URLSession.shared.data(from: artwork),
                   let jpeg = Self.resize(raw) else { continue }
+            guard epoch == cacheEpoch else { return nil }
             try? jpeg.write(to: file, options: .atomic)
             icons[bundleId] = jpeg
             return jpeg
         }
+        guard epoch == cacheEpoch else { return nil }
         FileManager.default.createFile(atPath: miss.path, contents: nil)
         return nil
     }

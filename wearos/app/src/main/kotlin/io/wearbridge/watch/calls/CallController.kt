@@ -34,6 +34,8 @@ sealed interface CallUi {
     /** Answer was sent; iOS is handing the call over (it removes the ringing call, then posts the connected one). */
     data class Answering(val caller: Caller) : CallUi
     data class Active(val call: WatchNotification, val caller: Caller, val startedAtMillis: Long) : CallUi
+    /** A short acknowledgement only: no timer or watch controls for a call handled on the phone. */
+    data class PhoneHandled(val caller: Caller, val answered: Boolean) : CallUi
     data class Ended(val caller: Caller, val outcome: Outcome, val durationMillis: Long?) : CallUi
 
     enum class Outcome { ENDED, DECLINED, DECLINED_BY_SHAKE, ANSWERING }
@@ -75,15 +77,47 @@ class CallController(private val context: Context) {
     private var endedJob: Job? = null
     private var listening = false
     private var listeningLatencyUs: Int? = null
+    private val presentation = CallPresentation()
 
     fun start() {
         scope.launch {
-            combine(BridgeGraph.repository.incomingCall, BridgeGraph.repository.activeCall) { r, a -> r to a }
-                .collect { (ringing, active) -> onCalls(ringing, active) }
+            combine(BridgeGraph.repository.incomingCall, BridgeGraph.repository.activeCall,
+                BridgeGraph.link, BridgeGraph.pairing.state) { r, a, link, pairing ->
+                if (pairing.canAccess(link)) r to a else null
+            }.collect { calls ->
+                if (calls == null) {
+                    endedJob?.cancel()
+                    stopRinging()
+                    activeUid = null
+                    pendingOutcome = null
+                    presentation.reset()
+                    _ui.value = CallUi.None
+                    updateSensor()
+                } else onCalls(calls.first, calls.second)
+            }
         }
         scope.launch {
             combine(BridgeGraph.settings.shakeToDecline, BridgeGraph.settings.shakeToEnd, BridgeGraph.settings.endCallFromWatch) { _, _, _ -> }
                 .collect { updateSensor() }
+        }
+        scope.launch {
+            BridgeGraph.repository.actionStatus.collect { result ->
+                if (result?.action == ActionId.POSITIVE && result.state in setOf(
+                        io.wearbridge.watch.notifications.ActionStatus.State.FAILED,
+                        io.wearbridge.watch.notifications.ActionStatus.State.UNAVAILABLE,
+                    )) {
+                    if (presentation.answerFailed(result.uid)) {
+                        if (pendingOutcome == CallUi.Outcome.ANSWERING) pendingOutcome = null
+                        (_ui.value as? CallUi.Active)?.let { current ->
+                            val next = presentation.active(current.call, current.caller, current.startedAtMillis)
+                            if (next is CallUi.PhoneHandled) {
+                                showPhoneHandled(next)
+                                updateSensor()
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -97,6 +131,19 @@ class CallController(private val context: Context) {
     }
 
     fun answer() = act(ActionId.POSITIVE, CallUi.Outcome.ANSWERING)
+
+    /** Includes actions from notification buttons and the generic notification detail surface. */
+    fun actionFromWatch(uid: Long, action: ActionId) {
+        val ringing = BridgeGraph.repository.incomingCall.value?.takeIf { it.uid == uid } ?: return
+        presentation.ringing(uid, ringing.ancs.appIdentifier, ringing.ancs.title)
+        vibrator?.cancel()
+        if (action == ActionId.POSITIVE) {
+            pendingOutcome = CallUi.Outcome.ANSWERING
+            presentation.answerFromWatch(uid)
+        } else if (pendingOutcome != CallUi.Outcome.DECLINED_BY_SHAKE) {
+            pendingOutcome = CallUi.Outcome.DECLINED
+        }
+    }
 
     fun decline(byShake: Boolean = false) =
         act(ActionId.NEGATIVE, if (byShake) CallUi.Outcome.DECLINED_BY_SHAKE else CallUi.Outcome.DECLINED)
@@ -115,6 +162,7 @@ class CallController(private val context: Context) {
         if (label == null) return
         vibrator?.cancel()
         pendingOutcome = outcome
+        if (outcome == CallUi.Outcome.ANSWERING) presentation.answerFromWatch(r.call.uid)
         BridgeGraph.performAction(r.call.uid, action)
     }
 
@@ -125,6 +173,7 @@ class CallController(private val context: Context) {
                 val caller = callerFor(ringing)
                 lastCaller = caller
                 if (ringingUid != ringing.uid) {
+                    presentation.ringing(ringing.uid, ringing.ancs.appIdentifier, ringing.ancs.title)
                     ringingUid = ringing.uid
                     pendingOutcome = null
                     if (silencedUid != ringing.uid) ring()
@@ -132,33 +181,43 @@ class CallController(private val context: Context) {
                 _ui.value = CallUi.Ringing(ringing, caller, silenced = silencedUid == ringing.uid)
             }
             active != null -> {
-                endedJob?.cancel()
                 stopRinging()
-                if (activeUid != active.uid) {
+                val newActive = activeUid != active.uid
+                if (newActive) {
+                    endedJob?.cancel()
                     activeUid = active.uid
                     activeSince = System.currentTimeMillis()
                 }
                 val caller = lastCaller?.takeIf { it.name == active.ancs.title || active.ancs.title.isBlank() } ?: callerFor(active)
                 lastCaller = caller
-                _ui.value = CallUi.Active(active, caller, activeSince)
+                val next = presentation.active(active, caller, activeSince)
+                if (next is CallUi.Active) {
+                    _ui.value = next
+                    BridgeGraph.notifier.show(active, alert = false)
+                } else if (newActive || _ui.value is CallUi.Ringing || _ui.value is CallUi.Answering) {
+                    showPhoneHandled(next as CallUi.PhoneHandled)
+                }
             }
             else -> {
                 val was = _ui.value
+                endedJob?.cancel()
                 stopRinging()
-                val summary = when (was) {
+                val stale = when (was) {
+                    is CallUi.Ringing -> BridgeGraph.repository.wasCallInvalidated(was.call.uid)
+                    is CallUi.Active -> BridgeGraph.repository.wasCallInvalidated(was.call.uid)
+                    else -> false
+                }
+                val summary = if (stale) null else when (was) {
                     is CallUi.Active -> CallUi.Ended(was.caller, CallUi.Outcome.ENDED, System.currentTimeMillis() - was.startedAtMillis)
                     // Answered from the watch: keep the caller on screen while iOS connects. Declined: say so.
-                    // Otherwise (handled on the iPhone, or missed) no summary: the screen just closes.
-                    is CallUi.Ringing -> when (pendingOutcome) {
-                        CallUi.Outcome.ANSWERING -> CallUi.Answering(was.caller)
-                        CallUi.Outcome.DECLINED, CallUi.Outcome.DECLINED_BY_SHAKE -> CallUi.Ended(was.caller, pendingOutcome!!, null)
-                        else -> null
-                    }
+                    // Without a watch action, acknowledge phone handling without guessing rejection.
+                    is CallUi.Ringing -> presentation.removedRinging(was.caller, pendingOutcome)
                     is CallUi.Answering -> null // the connected call never appeared
                     else -> null
                 }
                 activeUid = null
                 pendingOutcome = null
+                if (summary !is CallUi.Answering && summary !is CallUi.PhoneHandled) presentation.reset()
                 if (summary == null) {
                     _ui.value = CallUi.None
                 } else {
@@ -166,11 +225,23 @@ class CallController(private val context: Context) {
                     endedJob = scope.launch {
                         delay(if (summary is CallUi.Answering) ANSWER_TIMEOUT_MS else SUMMARY_MS)
                         _ui.value = CallUi.None
+                        presentation.reset()
                     }
                 }
             }
         }
         updateSensor()
+    }
+
+    private fun showPhoneHandled(state: CallUi.PhoneHandled) {
+        endedJob?.cancel()
+        activeUid?.let(BridgeGraph.notifier::cancel)
+        _ui.value = state
+        DiagLog.i("call: phone acknowledgement answered=${state.answered}")
+        endedJob = scope.launch {
+            delay(SUMMARY_MS)
+            _ui.value = CallUi.None
+        }
     }
 
     private fun stopRinging() {

@@ -1,13 +1,25 @@
 # Test Plan
 
+## Current verification — 8 October 2026
+
+Watch UX follow-up adds seven state/navigation regressions (112 app tests; 195 Android total). Opt-in `testWatchCancelPairing` verifies waiting setup cancellation and re-pair; the watch host driver verifies entry into pairing and checks a code-screen hold beyond the physical 15-second timeout. Final 450×450 circular-display screenshots and native scenario results are tracked in the dated QA report.
+
+[Fresh physical matrix and fixes](PAIRING_SCENARIO_QA_2026-10-08.md): 188 Android tests and 33 Swift tests on the actual iPhone; online/offline removal and re-pair from both devices, denial/retry and Bluetooth feature gates passed. The dedicated watch approval screen receives physical normal/large-text screenshot QA. `PairingHardwareQA` is opt-in and changes app pairing/Bluetooth state; normal `PairingPOC` unit runs exclude it. Second-hardware replacement and broader resilience remain open.
+
+## Prior verification — 7 October 2026
+
+Latest pairing changes: [pairing verification](PAIRING_LIFECYCLE.md) and [final physical scenario matrix](PAIRING_SCENARIO_QA_2026-10-07.md). 186 Android tests (35 ANCS, 13 AMS, 35 protocol, 103 app), 30 Swift tests on the physical iPhone after the final fix, watch debug/release builds/lint and signed iOS build pass. Connected/offline Unpair and Forget from both sides and same-device re-pair passed; final apps are secure ANCS READY. Real second-device replacement and further resilience acceptance remain open. Prior QA evidence below is retained as dated context.
+
+[QA report](QA_REPORT_2026-10-06.md) and [current counts](qa-2026-10-06/battery-alert-unit-summary.json): ANCS 35, AMS 13, protocol 31, watch app 93; additional production-contact-channel harness 6. Swift 21 tests pass on simulator and physical iPhone. Both lint variants pass with warnings. Historical hardware results below remain dated evidence; fresh call-provider, closed-player media, reboot and endurance checks are tracked in the report.
+
 ## Automated (run on every change)
 
 | Suite | Command | Covers | Status |
 |---|---|---|---|
 | ANCS protocol | `cd wearos && ./gradlew :ancs:test` | Notification Source parsing, command encoding, fragment reassembly (every split offset, 1-byte and MTU chunks), app attributes, dates, session queueing/priorities/timeouts/stale results, actions, reset | ✅ 35 passing |
-| AMS protocol | `./gradlew :ams:test` | Entity updates (Unicode, truncation flag), registration and command encoding, supported-command parsing, playback info, position extrapolation and clamping, truncated-value refetch, log redaction | ✅ 8 passing |
-| Bridge protocol | `./gradlew :protocol:test` | Framing/reassembly, SETTINGS snapshot (Unicode, tri-state, v1.0/v1.1 prefs trailer), rules, icons, prefs, watch STATUS, switches, truncation | ✅ 14 passing |
-| Watch app logic | `./gradlew :app:testDebugUnitTest` | Link state machine (happy path, pairing, auth-retry, backoff and cap, reconnect, BT off/on, duplicate/stale events, client rebuild, stop); notification policy; repository (history on/off/expiry, never for hidden apps or calls, stale→history, watch-only delete survives replay, clear-all keeps calls, conversation threads) | ✅ 32 passing |
+| AMS protocol | `./gradlew :ams:test` | Entity updates (Unicode, truncation flag), registration and command encoding, supported-command parsing, playback info, position extrapolation and clamping, truncated-value refetch, log redaction | ✅ 13 passing |
+| Bridge protocol | `./gradlew :protocol:test` | Framing/reassembly, SETTINGS snapshot (Unicode, tri-state, v1.0/v1.1 prefs trailer), rules, icons, prefs, watch STATUS, switches, truncation | ✅ 31 passing |
+| Watch app logic | `./gradlew :app:testDebugUnitTest` | Link state machine (happy path, pairing, auth-retry, backoff and cap, reconnect, BT off/on, duplicate/stale events, client rebuild, stop); notification policy; repository (history on/off/expiry, never for hidden apps or calls, stale→history, watch-only delete survives replay, clear-all keeps calls, conversation threads) | ✅ 84 passing |
 | Watch build | `cd wearos && ./gradlew :app:assembleDebug :app:lintDebug` | Compiles, lint clean of errors | ✅ |
 | iOS build | `cd ios && xcodegen && xcodebuild -scheme PairingPOC -destination 'generic/platform=iOS Simulator' build` | Compiles under Swift 6 strict concurrency | ✅ |
 
@@ -93,3 +105,31 @@ locked iPhone and iMessage are unverified. Run them before any release build.
 iPhone locked/unlocked × iOS app foreground/background/force-quit × watch screen on/off/charging ×
 distance 1/5/10 m × Wi-Fi off/cellular only × a 50-notifications/minute flood (dropped, duplicates,
 ordering, battery, UI). Apps: WhatsApp, Messages, Phone, Gmail, Slack, Instagram, Telegram.
+
+## Charging-aware battery alerts — 7 October 2026
+
+See [LOW_BATTERY_ALERTS.md](LOW_BATTERY_ALERTS.md). Automated threshold/charging tests pass; native watch alert and authenticated watch-to-phone STATUS probes use simulated battery readings restored afterward. Natural depletion, actual banner/haptic observation, charger connection races, permission changes while already low, and Focus/DND combinations require physical acceptance.
+
+## Pairing lifecycle acceptance — partial hardware acceptance
+
+| Check | Expected | Status |
+| --- | --- | --- |
+| Paired device, Bluetooth off | Paired / Disconnected; peer features hidden; Device accessible | Observed on both physical devices |
+| Removal cancellation | Destructive scope and offline guidance; dismiss preserves pairing | iPhone Unpair and watch Unpair/Forget cancellation observed |
+| Saved watch requests fresh approval | Pairing / Waiting; no features until allowed | Physical fresh approval after both Unpair directions passed |
+| Deny, Ask Again, Allow | Accurate denial status, gates locked, retry requires fresh approval | Final physical visual check passed 13:31–13:32 |
+| Watch approval and reconnection | Authenticated session, ANCS READY, both Connected | Passed repeatedly; final installed builds at 18:13–18:14 |
+| Fresh setup after app/OS Forget | Explicit selection, matching OS and app codes, full onboarding remains accessible | Same hardware passed with Show Nearby fallback; literal clean installations on two fresh devices not tested |
+| Connected Unpair, either initiator | Both clear approval/data, entries retained, no silent re-pair | Physical removals/ACKs and unpaired process relaunch passed |
+| Connected Forget, either initiator | Both clear approval/data and saved entries | Physical removals/ACKs passed; clean watch repeat at 17:49 |
+| Offline Unpair/Forget, either initiator | Local cleanup, honest peer-confirmation guidance, manual counterpart cleanup | All four physical cycles passed; watch service-stopped Forget verified visually |
+| Pair again after removal | Fresh app approval; contacts remain Off until chosen | Retained and post-Forget same-device pairing passed |
+| Phone search before watch Pair | Watch appears if OS connects after initial zero-candidate query | Exact physical race passed on final refresh build at 18:12:55 |
+| Different phone/watch after Forget | Old entry/data cleared, intended device selected, old phone rejected | Isolated identity/address tests pass; no second physical hardware available |
+| Interrupted removal/failed cleanup | No approval restored; cleanup resumes and blocks pairing until successful | Isolated watch commit/reload and iOS cleanup-journal tests pass; interrupted peer session local cleanup observed; exact process death during cleanup unverified |
+| Process restart/reboot after removal | Remain Unpaired; no automatic Bridge service | Both unpaired app restarts passed; unfinished-pairing watch reboot observed 13:14 |
+| Bluetooth restored after removal | Unpaired until explicit Pair; fresh approval still required | Physical watch radio Off/On passed 18:05–18:13 |
+| Paired repeated reboot / iPhone reboot / range loss | Reconnect safely, no stale peer data exposed | Repeated controlled physical matrix open |
+| Each feature/call screen and tile during disconnect/removal | Hide peer content/controls, return to setup/device view | Root gates implemented; exhaustive physical matrix open |
+| System Bluetooth Forget/Unpair | OS bond removed through Settings; Bridge stays unpaired | iPhone Settings Forget and Android automatic stale-bond removal observed; fresh OS re-pair passed; manual watch-side OS Unpair untested |
+| Encryption wait retry branch | Keep OS approval opportunity, bounded epoch-scoped retries | Final build passed fresh OS pairing, but successful attempt did not trigger retry diagnostic |

@@ -3,6 +3,8 @@ package io.wearbridge.watch.ui
 import io.wearbridge.watch.ble.LinkIssue
 import io.wearbridge.watch.ble.LinkSnapshot
 import io.wearbridge.watch.ble.LinkState
+import io.wearbridge.watch.ble.DevicePairing
+import io.wearbridge.watch.ble.PairingPhase
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -10,6 +12,31 @@ import java.time.format.DateTimeFormatter
 
 /** Plain-language status copy. Technical details only appear on the Diagnostics screen. */
 object Copy {
+    fun pairingPhase(pairing: DevicePairing, forgetting: Boolean = false): String = when (pairing.phase) {
+        PairingPhase.UNPAIRED -> "Unpaired"
+        PairingPhase.PAIRING -> "Pairing"
+        PairingPhase.PAIRED -> "Paired"
+        PairingPhase.REMOVING -> if (forgetting) "Forgetting…" else "Unpairing…"
+    }
+
+    /** A working Bluetooth link alone must never look like completed app approval. */
+    fun pairingConnection(pairing: DevicePairing, link: LinkSnapshot): String? = when {
+        !pairing.enabled -> null
+        // Notifications wait for approval, so a bonded setup link stops at SUBSCRIBING until then.
+        pairing.phase == PairingPhase.PAIRING && (link.state == LinkState.SUBSCRIBING || link.state == LinkState.READY) -> "Waiting for approval"
+        else -> headline(link)
+    }
+
+    fun pairLabel(pairing: DevicePairing) = if (pairing.address == null) "Pair iPhone" else "Pair again"
+    // The iPhone may have kept or forgotten this watch, so name the start of either button.
+    fun pairInstructions(pairing: DevicePairing) = if (pairing.address == null)
+        "On your iPhone, open Bridge, tap Pair Watch and select this watch."
+    else "On your iPhone, open Bridge and tap Pair Watch (or Pair Watch Again)."
+
+    fun removalExplanation(forget: Boolean) = if (forget)
+        "Clears data and removes saved iPhone."
+    else "Clears synced data. Keeps iPhone saved."
+
     fun headline(s: LinkSnapshot): String = when (s.state) {
         LinkState.READY -> "Connected"
         LinkState.RECONNECTING -> "Reconnecting…"
@@ -22,6 +49,7 @@ object Copy {
             else -> "Not connected"
         }
         LinkState.ERROR -> when (s.issue) {
+            LinkIssue.BACKGROUND_START_BLOCKED -> "Open Bridge to reconnect"
             LinkIssue.ADVERTISING_UNSUPPORTED -> "Can't connect"
             LinkIssue.ADVERTISING_FAILED -> "Couldn't become visible"
             LinkIssue.PAIRING_FAILED -> "Pairing didn't finish"
@@ -42,6 +70,7 @@ object Copy {
             else -> null
         }
         LinkState.ERROR -> when (s.issue) {
+            LinkIssue.BACKGROUND_START_BLOCKED -> "Your watch paused background startup. Open Bridge on the watch to restore the connection."
             LinkIssue.ADVERTISING_UNSUPPORTED -> "This watch's Bluetooth can't host the iPhone connection."
             LinkIssue.PAIRING_FAILED -> "On your iPhone, open Settings › Bluetooth, forget this watch, then pair again from the Bridge app."
             LinkIssue.ANCS_UNAVAILABLE -> "On iPhone, open Settings › Bluetooth, tap ⓘ next to this watch and turn on Share System Notifications."

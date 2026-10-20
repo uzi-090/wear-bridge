@@ -8,6 +8,8 @@ struct ContactsView: View {
 
     var body: some View {
         List {
+            if sync.removalPending { Section { Text("Removal pending — reconnect your watch.") } }
+            if let error = sync.lastError { Section { Text(error).foregroundStyle(.secondary) } }
             switch sync.authorization {
             case .notDetermined:
                 Section {
@@ -42,6 +44,8 @@ struct ContactsView: View {
                         LabeledContent("On your watch", value: link.watchStatus.map { "\($0.contactCount)" } ?? "–")
                         if sync.syncing {
                             ProgressView(value: sync.progress) { Text("Syncing…") }
+                        } else if sync.awaitingConfirmation {
+                            Text("Waiting for watch confirmation…")
                         } else if let date = sync.lastSynced {
                             LabeledContent("Last synced", value: date.formatted(.relative(presentation: .named)))
                         }

@@ -149,6 +149,8 @@ fun TransformingLazyColumnItemScope.NavButton(
     secondary: String? = null,
     iconTint: Color = Color.Unspecified,
     enabled: Boolean = true,
+    labelMaxLines: Int = 1,
+    secondaryMaxLines: Int = 1,
     onClick: () -> Unit,
 ) {
     FilledTonalButton(
@@ -164,8 +166,8 @@ fun TransformingLazyColumnItemScope.NavButton(
                 modifier = Modifier.size(ButtonDefaults.IconSize),
             )
         },
-        label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-        secondaryLabel = secondary?.let { { Text(it, maxLines = 1, overflow = TextOverflow.Ellipsis) } },
+        label = { Text(label, maxLines = labelMaxLines, overflow = TextOverflow.Ellipsis) },
+        secondaryLabel = secondary?.let { { Text(it, maxLines = secondaryMaxLines, overflow = TextOverflow.Ellipsis) } },
     )
 }
 
@@ -177,7 +179,7 @@ fun TransformingLazyColumnItemScope.PrimaryButton(spec: TransformationSpec, labe
         modifier = morph(spec),
         transformation = surface(spec),
         icon = icon?.let { { Icon(painterResource(it), contentDescription = null, modifier = Modifier.size(ButtonDefaults.IconSize)) } },
-        label = { Text(label, maxLines = 1) },
+        label = { Text(label, maxLines = 2) },
     )
 }
 

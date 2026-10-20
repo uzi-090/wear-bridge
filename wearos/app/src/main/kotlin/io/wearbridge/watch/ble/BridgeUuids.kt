@@ -33,6 +33,7 @@ object BridgeUuids {
     /** Bridge messages are sealed with app-level keys (the watch's public key follows the capabilities). */
     const val CAP_SECURE = 1 shl 6
     const val CAP_CONTACTS = 1 shl 7
+    const val CAP_LIFECYCLE = 1 shl 8
 
     private fun characteristic(index: Int): UUID =
         UUID.fromString("9C664C93-19F2-435D-%04X-A40751731AE1".format(index))

@@ -10,8 +10,9 @@ struct PairingPOCApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
-                // People who paired before onboarding existed go straight home.
-                if onboarded || link.hasSavedWatch {
+                // Legacy approval migrates onboarding in DevicePairing. Discovering a watch
+                // during first-run setup must not discard the remaining onboarding steps.
+                if onboarded {
                     HomeView(link: link)
                 } else {
                     OnboardingView(link: link) { onboarded = true }
@@ -23,7 +24,10 @@ struct PairingPOCApp: App {
             }
             .onChange(of: scenePhase) { _, phase in
                 DiagFile.append("app scenePhase=\(phase)")
-                if phase == .active { findMyPhone.appBecameActive() }
+                if phase == .active {
+                    findMyPhone.appBecameActive()
+                    Task { await ContactSync.shared.refreshAvailable() }
+                }
             }
         }
     }

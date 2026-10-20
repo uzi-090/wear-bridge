@@ -1,5 +1,6 @@
 package io.wearbridge.watch.ui
 
+import android.content.Intent
 import android.provider.Settings
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -69,12 +70,14 @@ import io.wearbridge.watch.ui.theme.surface
 @Composable
 fun HomeScreen(
     hasPermissions: Boolean,
+    bluetoothEnabled: Boolean,
     onRequestPermissions: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenMedia: () -> Unit,
     onOpenFindPhone: () -> Unit,
     onOpenContacts: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenDevice: () -> Unit,
 ) {
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val items by BridgeGraph.repository.items.collectAsStateWithLifecycle()
@@ -83,15 +86,28 @@ fun HomeScreen(
     val battery by BridgeGraph.phoneBattery.collectAsStateWithLifecycle()
     val charging by BridgeGraph.phoneCharging.collectAsStateWithLifecycle()
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
-    val approval by BridgeGraph.pendingApproval.collectAsStateWithLifecycle()
     val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val ready = link.state == LinkState.READY
+    val pairing by BridgeGraph.pairing.state.collectAsStateWithLifecycle()
+    val cleanupPending by BridgeGraph.pairing.cleanupPending.collectAsStateWithLifecycle()
+    val pairingNotice by BridgeGraph.pairing.notice.collectAsStateWithLifecycle()
+    val ready = pairing.canAccess(link)
 
     BridgeList { spec ->
-        item { StatusLine(link, Modifier.then(morph(spec))) }
+        item { Note(spec, Copy.pairingPhase(pairing, BridgeGraph.pairing.pendingRemovalForget == true)) }
+        if (pairing.enabled && !(pairing.phase == io.wearbridge.watch.ble.PairingPhase.PAIRING && pairingNotice != null)) {
+            item { StatusLine(link, Copy.pairingConnection(pairing, link) ?: "Not connected", ready, Modifier.then(morph(spec))) }
+        }
+        pairingNotice?.let { item { Note(spec, it) } }
+        if (pairing.phase == io.wearbridge.watch.ble.PairingPhase.UNPAIRED && hasPermissions && bluetoothEnabled && !cleanupPending) {
+            item { PrimaryButton(spec, Copy.pairLabel(pairing), R.drawable.ic_bluetooth) { BridgeGraph.pairIphone(context) } }
+            item { Note(spec, Copy.pairInstructions(pairing)) }
+        }
+        if (pairing.phase == io.wearbridge.watch.ble.PairingPhase.PAIRING && pairingNotice == null && hasPermissions && bluetoothEnabled) {
+            item { Note(spec, Copy.pairInstructions(pairing)) }
+        }
 
-        item {
+        if (ready) item {
             HeroCard(
                 link = link,
                 name = if (model != null) PhoneServicesClient.marketingName(model) else phone ?: "iPhone",
@@ -102,28 +118,20 @@ fun HomeScreen(
             )
         }
 
-        approval?.let { code ->
-            item { Note(spec, "Allow the Bridge app on your iPhone? It shows the same code.", MaterialTheme.colorScheme.onSurface) }
-            item {
-                Text(
-                    code.chunked(3).joinToString(" "),
-                    style = MaterialTheme.typography.displaySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    textAlign = TextAlign.Center,
-                    modifier = morph(spec),
-                )
-            }
-            item { PrimaryButton(spec, "Allow", R.drawable.ic_check) { BridgeGraph.approveIphoneApp(true) } }
-            item { NavButton(spec, R.drawable.ic_lock, "Deny", iconTint = BridgePalette.Destructive) { BridgeGraph.approveIphoneApp(false) } }
+        if (pairing.phase != io.wearbridge.watch.ble.PairingPhase.REMOVING) {
+            if (!hasPermissions) item { PrimaryButton(spec, "Allow Bluetooth", R.drawable.ic_bluetooth, onRequestPermissions) }
+            else if (!bluetoothEnabled) item { PrimaryButton(spec, "Turn on Bluetooth", R.drawable.ic_bluetooth) {
+                runCatching { context.startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            } }
+            else if (pairing.enabled && link.state == LinkState.ERROR) item { PrimaryButton(spec, "Reconnect", R.drawable.ic_rotate, BridgeGraph::reconnect) }
         }
+        if (cleanupPending && pairing.phase != io.wearbridge.watch.ble.PairingPhase.REMOVING) item { Note(spec, "Finish removing saved data in Pairing & Devices before pairing again.") }
 
-        if (!hasPermissions) item { PrimaryButton(spec, "Allow Bluetooth", R.drawable.ic_bluetooth, onRequestPermissions) }
-        if (link.state == LinkState.ERROR) item { PrimaryButton(spec, "Reconnect", R.drawable.ic_rotate, BridgeGraph::reconnect) }
-
+        if (ready) {
         // Two big tiles: the notification count as a numeral, and what's playing.
         item {
             val np = media
-            val playing = np?.takeIf { it.hasPlayer }
+            val playing = np?.takeIf { it.hasMediaSession }
             val app = playing?.let { AppCatalog.forPlayerName(it.playerName, seen) }
             ButtonGroup(modifier = morph(spec), transformation = surface(spec)) {
                 val alertsSource = remember { MutableInteractionSource() }
@@ -182,15 +190,16 @@ fun HomeScreen(
                 }
             }
         }
-        Copy.guidance(link)?.takeIf { !ready }?.let { text -> item { Note(spec, text) } }
+        }
+        item { NavButton(spec, R.drawable.ic_phone_iphone, "Pairing & Devices", "Pair, unpair or forget",
+            labelMaxLines = 2, secondaryMaxLines = 2, onClick = onOpenDevice) }
+        Copy.guidance(link)?.takeIf { pairing.enabled && !ready }?.let { text -> item { Note(spec, text) } }
     }
 }
 
 /** Status in words with a dot whose shape (filled vs ring) also changes, so it's never colour alone. */
 @Composable
-private fun StatusLine(link: LinkSnapshot, modifier: Modifier) {
-    val headline = Copy.headline(link)
-    val ok = link.state == LinkState.READY
+private fun StatusLine(link: LinkSnapshot, headline: String, ok: Boolean, modifier: Modifier) {
     val busy = link.state in setOf(LinkState.RECONNECTING, LinkState.CONNECTED, LinkState.DISCOVERING_SERVICES, LinkState.SUBSCRIBING, LinkState.PAIRING, LinkState.ADVERTISING)
     val color = when {
         ok -> BridgePalette.Connected
@@ -243,7 +252,8 @@ private fun HeroCard(
     modifier: Modifier,
     transformation: androidx.wear.compose.material3.SurfaceTransformation,
 ) {
-    val ready = link.state == LinkState.READY
+    val pairing by BridgeGraph.pairing.state.collectAsStateWithLifecycle()
+    val ready = pairing.canAccess(link)
     Card(
         onClick = { if (link.state == LinkState.ERROR) BridgeGraph.reconnect() },
         modifier = modifier,
@@ -266,14 +276,14 @@ private fun HeroCard(
                 }
             }
             Box(contentAlignment = Alignment.Center, modifier = Modifier.size(46.dp)) {
-                val level = (battery ?: 0) / 100f
-                val low = battery != null && battery <= 20
+                val level = (if (ready) battery ?: 0 else 0) / 100f
+                val low = ready && battery != null && battery <= 20
                 LiveRing(
                     progress = if (ready) level else 0f,
                     color = if (low) BridgePalette.Attention else BridgePalette.Connected,
                     modifier = Modifier.size(46.dp).semantics {
-                        contentDescription = (if (battery != null) "iPhone battery $battery percent" else "iPhone battery unknown") +
-                            if (charging) ", charging" else ""
+                        contentDescription = (if (ready && battery != null) "iPhone battery $battery percent" else "iPhone battery unknown") +
+                            if (ready && charging) ", charging" else ""
                     },
                 )
                 Icon(

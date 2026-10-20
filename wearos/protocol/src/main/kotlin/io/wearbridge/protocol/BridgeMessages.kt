@@ -14,6 +14,7 @@ object BridgeMessageType {
     const val PING = 0x12
     /** u8 battery (255 = unknown), u8 flags (bit0 charging, bit1 full): the iPhone's power, from its app. */
     const val PHONE_STATUS = 0x13
+    const val DEVICE_LIFECYCLE = 0x14
 
     // EVENTS, watch → iOS
     /** u8: 1 = the user asked the watch to ring the iPhone, 0 = stop. */
@@ -22,6 +23,7 @@ object BridgeMessageType {
     const val FIND_WATCH_STOPPED = 0x91
     /** str phone, str name: "Call from iPhone". The iPhone app offers the call; the user confirms there. */
     const val CALL_REQUEST = 0x92
+    const val DEVICE_LIFECYCLE_EVENT = 0x93
 
     // DEVICE_STATUS, watch → iOS
     const val STATUS = 0xA0
@@ -46,6 +48,13 @@ data class WatchStatus(
 )
 
 object BridgeCodec {
+    data class Lifecycle(val forget: Boolean, val acknowledgement: Boolean)
+    fun encodeLifecycle(value: Lifecycle) = byteArrayOf(if (value.forget) 2 else 1, if (value.acknowledgement) 1 else 0)
+    fun decodeLifecycle(bytes: ByteArray): Lifecycle {
+        require(bytes.size == 2 && bytes[0].toInt() in 1..2 && bytes[1].toInt() in 0..1) { "bad DEVICE_LIFECYCLE" }
+        return Lifecycle(bytes[0].toInt() == 2, bytes[1].toInt() == 1)
+    }
+
     fun encodeStatus(s: WatchStatus): ByteArray = Bytes.Writer().apply {
         u8(s.battery?.coerceIn(0, 100) ?: UNKNOWN_BATTERY)
         u8((if (s.charging) 1 else 0) or (if (s.notificationsReady) 2 else 0) or (if (s.mediaReady) 4 else 0))

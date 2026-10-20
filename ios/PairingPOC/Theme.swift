@@ -70,7 +70,8 @@ extension WatchLink.Phase {
         case .bluetoothOff: "Bluetooth is off"
         case .bluetoothUnauthorized: "Bluetooth access needed"
         case .unsupported: "Bluetooth unavailable"
-        case .notSetUp: "Not set up"
+        case .notSetUp: "Unpaired"
+        case .removing: "Unpairing…"
         case .searching: "Looking for your watch…"
         case .connecting: "Connecting…"
         case .pairing: "Pairing"
@@ -85,8 +86,9 @@ extension WatchLink.Phase {
         case .bluetoothOff: "Turn on Bluetooth in Control Center."
         case .bluetoothUnauthorized: "Bridge connects to your watch over Bluetooth. Allow Bluetooth for Bridge in Settings."
         case .unsupported: "This device can't use Bluetooth LE."
-        case .notSetUp: "Open Bridge on your watch, keep it close, then tap Find Watch."
-        case .searching: "Keep your watch nearby with Bridge open."
+        case .notSetUp: "On your watch, open Bridge and tap Pair iPhone. Then tap Pair Watch here."
+        case .removing: "Clearing device data and ending the Bridge relationship."
+        case .searching: "Keep your watch nearby with Bridge open and tap Pair iPhone on the watch."
         case .pairing: "If asked, check that the code matches on your watch, then tap Pair on both."
         case .reconnecting: "Your watch will reconnect automatically when it's nearby."
         case .needsAttention(let message): message
@@ -97,7 +99,7 @@ extension WatchLink.Phase {
     var symbol: String {
         switch self {
         case .connected: "checkmark.circle.fill"
-        case .reconnecting, .connecting, .pairing, .searching, .starting: "arrow.triangle.2.circlepath"
+        case .removing, .reconnecting, .connecting, .pairing, .searching, .starting: "arrow.triangle.2.circlepath"
         case .notSetUp: "circle.dashed"
         default: "exclamationmark.triangle.fill"
         }
@@ -106,7 +108,7 @@ extension WatchLink.Phase {
     var tint: Color {
         switch self {
         case .connected: .green
-        case .reconnecting, .connecting, .pairing, .searching, .starting, .notSetUp: .blue
+        case .removing, .reconnecting, .connecting, .pairing, .searching, .starting, .notSetUp: .blue
         default: .orange
         }
     }

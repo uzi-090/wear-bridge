@@ -133,12 +133,28 @@ data class NowPlaying(
     /** 0.0–1.0, or null until iOS reports it. */
     val volume: Float? = null,
     val supported: Set<RemoteCommand> = emptySet(),
+    /** Distinguishes initial unknown capabilities from an explicitly empty command list. */
+    val commandsKnown: Boolean = false,
     /** Attributes iOS truncated to fit a packet, as (entity, attribute). The client fetches the full value. */
     val truncated: Set<Pair<Int, Int>> = emptySet(),
 ) {
     /** iOS reports an empty player name when nothing has played since the last reset. */
     val hasPlayer: Boolean get() = playerName.isNotEmpty() || title.isNotEmpty()
     val isPlaying: Boolean get() = state == PlaybackState.PLAYING
+
+    fun can(command: RemoteCommand): Boolean = hasPlayer &&
+        (command in supported || (!commandsKnown && supported.isEmpty()))
+
+    val playPauseCommand: RemoteCommand?
+        get() = when {
+            isPlaying && can(RemoteCommand.PAUSE) -> RemoteCommand.PAUSE
+            !isPlaying && can(RemoteCommand.PLAY) -> RemoteCommand.PLAY
+            can(RemoteCommand.TOGGLE_PLAY_PAUSE) -> RemoteCommand.TOGGLE_PLAY_PAUSE
+            else -> null
+        }
+
+    val hasMediaSession: Boolean get() = hasPlayer && (isPlaying || playPauseCommand != null ||
+        can(RemoteCommand.NEXT_TRACK) || can(RemoteCommand.PREVIOUS_TRACK))
 
     fun positionSeconds(nowMillis: Long): Double {
         val p = elapsedSeconds + if (isPlaying) rate * (nowMillis - elapsedAtMillis) / 1000.0 else 0.0
@@ -150,7 +166,10 @@ data class NowPlaying(
         val key = u.entity to u.attribute
         val next = when (u.entity) {
             EntityId.PLAYER -> when (u.attribute) {
-                PlayerAttribute.NAME -> copy(playerName = u.value)
+                PlayerAttribute.NAME -> if (u.value != playerName && (playerName.isNotBlank() || u.value.isBlank())) {
+                    copy(playerName = u.value, title = "", artist = "", album = "", durationSeconds = 0.0,
+                        elapsedSeconds = 0.0, rate = 0.0, state = PlaybackState.PAUSED, truncated = emptySet())
+                } else copy(playerName = u.value)
                 PlayerAttribute.PLAYBACK_INFO -> PlaybackInfo.parse(u.value)?.let {
                     copy(state = it.state, rate = it.rate, elapsedSeconds = it.elapsedSeconds, elapsedAtMillis = nowMillis)
                 } ?: copy(state = PlaybackState.PAUSED, rate = 0.0)
@@ -166,7 +185,7 @@ data class NowPlaying(
             }
             else -> this
         }
-        return next.copy(truncated = if (u.truncated) truncated + key else truncated - key)
+        return next.copy(truncated = if (u.truncated) next.truncated + key else next.truncated - key)
     }
 
     /** The full value of a previously truncated attribute, read through Entity Attribute. */

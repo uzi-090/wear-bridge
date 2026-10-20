@@ -25,6 +25,7 @@ enum class LinkIssue {
     PAIRING_FAILED,
     ANCS_UNAVAILABLE,
     SETUP_FAILED,
+    BACKGROUND_START_BLOCKED,
 }
 
 data class LinkSnapshot(
@@ -44,8 +45,9 @@ sealed interface LinkEvent {
     data object CentralConnected : LinkEvent
     data object CentralDisconnected : LinkEvent
     data object ClientReady : LinkEvent
-    data class ServicesDiscovered(val hasAncs: Boolean, val bonded: Boolean) : LinkEvent
+    data class ServicesDiscovered(val hasAncs: Boolean, val bonded: Boolean, val serviceCount: Int = 1) : LinkEvent
     data object Bonded : LinkEvent
+    data object BondRemoved : LinkEvent
     data object BondFailed : LinkEvent
     data object Subscribed : LinkEvent
     data class SubscribeFailed(val authRequired: Boolean) : LinkEvent
@@ -111,6 +113,14 @@ class ConnectionStateMachine(
                 )
             }
 
+            LinkEvent.BondRemoved -> {
+                linkUp = false
+                everReady = false
+                go(LinkState.ADVERTISING, attempt = 0)
+                listOf(LinkEffect.CancelRetry, LinkEffect.CloseClient, LinkEffect.ResetSession,
+                    LinkEffect.DisconnectCentral, LinkEffect.StartAdvertising)
+            }
+
             LinkEvent.UserReconnect -> {
                 linkUp = false
                 go(LinkState.ADVERTISING, attempt = 0)
@@ -135,7 +145,7 @@ class ConnectionStateMachine(
             LinkEvent.PermissionMissing -> {
                 linkUp = false
                 go(LinkState.DISCONNECTED, LinkIssue.PERMISSION_MISSING)
-                listOf(LinkEffect.CancelRetry, LinkEffect.CloseClient, LinkEffect.StopAdvertising)
+                listOf(LinkEffect.CancelRetry, LinkEffect.CloseClient, LinkEffect.ResetSession, LinkEffect.ClosePeripheral)
             }
 
             is LinkEvent.AdvertisingFailed ->
@@ -170,6 +180,7 @@ class ConnectionStateMachine(
                     go(LinkState.PAIRING)
                     listOf(LinkEffect.CreateBond)
                 }
+                event.serviceCount == 0 -> retry(LinkState.CONNECTED, LinkIssue.SETUP_FAILED, LinkEffect.CloseClient)
                 event.hasAncs -> {
                     go(LinkState.SUBSCRIBING)
                     listOf(LinkEffect.Subscribe)

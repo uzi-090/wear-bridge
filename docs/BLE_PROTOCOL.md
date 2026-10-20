@@ -87,13 +87,15 @@ change, including a new app sending its first notification. Rules for apps the w
 ## CONTACTS (iPhone → watch)
 | Type | Payload |
 |---|---|
-| `0x30` BEGIN | u8 full (1 = replace all), u16 expected count |
+| `0x30` BEGIN | u8 full, u16 expected upserts, u16 expected deletes, u32 transaction ID (9 bytes) |
 | `0x31` UPSERT | u8 n, then per contact: str id, str name, u8 flags (bit0 favorite), u8 n + str phones (≤ 8, normalized: digits with optional leading +), u8 n + str emails (≤ 3) |
 | `0x32` DELETE | u8 n, str ids |
-| `0x33` END | u32 generation (≠ 0) |
-| `0x34` CLEAR | empty: remove every contact (sync turned off) |
+| `0x33` END | u32 generation (≠ 0), u32 transaction ID, 32-byte final-book SHA-256 (40 bytes) |
+| `0x34` CLEAR | 16-byte request nonce: remove every contact durably; authenticated EVENTS `0x35` echoes this nonce after saving |
 
-The watch applies batches to a staging copy and commits at END, then reports the generation in STATUS.
+The watch validates unique record counts, transaction identity and the complete resulting book digest before committing at END, then reports the durable generation in STATUS. The digest is SHA-256 of u32 contact count followed by UTF-8 ID byte-order sorted contacts, each encoded as u32 record length plus a one-record UPSERT payload. Limits: 5,000 contacts. Generation and records share one encrypted, atomically replaced file; existing encrypted books migrate on the next write.
+
+Upgrade both companion apps together. Legacy 3-byte BEGIN/4-byte END full transfers remain accepted with count validation; legacy incremental transfers are rejected. Legacy empty CLEAR removes data without a nonce acknowledgement. New companions retain removal intent until authenticated EVENTS `0x35` matches the persisted 16-byte request nonce. A status generation of zero alone does not acknowledge deletion.
 The iPhone keeps per-contact SHA-256 digests and sends only changes; a generation mismatch means a full
 resync. **Verified:** 957 contacts committed in one full sync.
 
@@ -153,3 +155,9 @@ DEVICE_STATUS / CONTACTS): `seq u32 BE ‖ AES-128-GCM ciphertext ‖ tag (16)`,
 seq u64 BE, AAD = framing version ‖ message type. Receivers reject seq ≤ last (replay/reorder).
 Implementations: `wearos/protocol/SecureChannel.kt`, `ios/PairingPOC/BridgeCrypto.swift`; shared test
 vectors generated with CryptoKit pass on both sides.
+
+## Device lifecycle extension (7 October 2026)
+
+PAIRING capability bit 8 advertises app device lifecycle support. On CONTROL, `DEVICE_LIFECYCLE = 0x14`; on EVENTS, `DEVICE_LIFECYCLE_EVENT = 0x93`. Both carry exactly two bytes: action (`1` unpair, `2` forget), acknowledgement (`0` request, `1` ACK). Other values and payload lengths are rejected. All lifecycle messages use the existing session sealing and replay checks.
+
+An authenticated request disables features and clears local peer data before its ACK. An iPhone-originated request receives the ACK on EVENTS, then the iPhone cancels its connection; the watch closes after that disconnect or its five-second fallback. A watch-originated request receives the ACK on CONTROL, then the watch closes. The five-second fallback means local removal only, not proof of remote removal. Offline users are told to remove the relationship on the other device too. Application pairing is distinct from the OS bond; system bond removal requires Bluetooth Settings.

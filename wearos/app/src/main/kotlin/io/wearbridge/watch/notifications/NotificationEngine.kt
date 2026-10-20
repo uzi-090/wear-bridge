@@ -15,6 +15,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 
 /**
  * Turns ANCS results into what the user sees and feels: the repository (inbox and call surfaces),
@@ -32,17 +34,47 @@ class NotificationEngine(
     private var lastAlertAt = 0L
     private val sourceArrival = HashMap<Long, Long>()
     private var purgeJob: Job? = null
+    private var lastReplayActivity = 0L
+
+    init {
+        scope.launch {
+            repository.items.collectLatest { items ->
+                val deadline = items.filter { it.clearedOnPhone }.minOfOrNull { it.clearedAtMillis + NotificationRepository.HISTORY_TTL_MS + 1 }
+                    ?: return@collectLatest
+                delay((deadline - System.currentTimeMillis()).coerceAtLeast(1))
+                repository.expireHistory()
+            }
+        }
+        scope.launch {
+            combine(policy.rules, policy.mode) { _, _ -> Unit }.collect { reconcilePolicies() }
+        }
+    }
+
+    private fun reconcilePolicies() {
+        for (n in repository.items.value + listOfNotNull(repository.activeCall.value)) {
+            val d = NotificationPolicy.decide(n.ancs.category, n.ancs.flags and 2 != 0,
+                n.app.kind, policy.rule(n.ancs.appIdentifier), policy.mode.value)
+            if (!d.keep || (n.clearedOnPhone && d.mask)) {
+                repository.discard(n.uid); notifier.cancel(n.uid)
+            } else {
+                repository.setMasked(n.uid, d.mask)
+                if (!d.surface) notifier.cancel(n.uid)
+                else if (!n.stale && notifier.isPosted(n.uid)) notifier.show(n.copy(masked = d.mask), alert = false)
+            }
+        }
+    }
 
     /** Called for every raw Notification Source packet, before ANCS processing, for latency and diagnostics. */
     fun onSourcePacket(packet: ByteArray) {
         val event = NotificationSourceEvent.parse(packet) ?: return
+        lastReplayActivity = SystemClock.elapsedRealtime()
         sourceArrival[event.uid] = SystemClock.elapsedRealtime()
         if (event.category == Category.UNKNOWN) {
             DiagLog.i("ns unknown category code=${packet[2].toInt() and 0xFF} flags=${event.flags}")
         }
     }
 
-    /** The link dropped: keep content visible but mark it stale, since its actions can't work until replay. */
+    /** The link dropped: retain stale entries for replay reconciliation; the UI hides all peer content. */
     fun onLinkReset() {
         sourceArrival.clear()
         purgeJob?.cancel()
@@ -57,7 +89,13 @@ class NotificationEngine(
     fun onSubscribed() {
         purgeJob?.cancel()
         purgeJob = scope.launch {
+            val started = SystemClock.elapsedRealtime()
+            lastReplayActivity = started
             delay(STALE_PURGE_MS)
+            while (SystemClock.elapsedRealtime() - started < REPLAY_MAX_MS &&
+                (sourceArrival.isNotEmpty() || SystemClock.elapsedRealtime() - lastReplayActivity < REPLAY_QUIET_MS)) {
+                delay(REPLAY_QUIET_MS)
+            }
             repository.purgeStale().forEach(notifier::cancel) // kept as history when that's on
         }
     }
@@ -73,7 +111,15 @@ class NotificationEngine(
     }
 
     override fun onNotification(notification: AncsNotification, event: NotificationSourceEvent) {
+        if (!io.wearbridge.watch.BridgeGraph.featuresAvailable) return
+        lastReplayActivity = SystemClock.elapsedRealtime()
         if (io.wearbridge.watch.BridgeGraph.demoMode) return // debug screenshots: real content stays off screen
+        if (io.wearbridge.watch.battery.LowBatteryPolicy.isOwnWatchWarning(notification.appIdentifier, notification.title)) {
+            sourceArrival.remove(notification.uid)
+            repository.discard(notification.uid)
+            notifier.cancel(notification.uid)
+            return
+        }
         if (repository.isDeleted(notification.uid)) {
             // Deleted on the watch earlier. iOS still has it and replays or updates it: stay quiet.
             sourceArrival.remove(notification.uid)
@@ -92,7 +138,7 @@ class NotificationEngine(
         val decision = NotificationPolicy.decide(gated.category, event.isImportant, app.kind, policy.rule(gated.appIdentifier), policy.mode.value)
         if (!decision.keep) {
             // The user turned this app off: don't store, post or buzz. Drop anything already shown.
-            repository.remove(gated.uid)
+            repository.discard(gated.uid)
             notifier.cancel(gated.uid)
             sourceArrival.remove(gated.uid)
             DiagLog.i("notif FILTERED app=${gated.appIdentifier} uid=${Redact.uid(gated.uid)}")
@@ -113,7 +159,8 @@ class NotificationEngine(
 
         // Replayed notifications go to the in-app inbox only. Posting them all floods the watch and
         // Android's 50-per-app notification quota. A ringing call is the exception.
-        val surface = decision.surface && (!event.isPreExisting || wn.isIncomingCall || notifier.isPosted(gated.uid))
+        // CallController posts connected calls only when Answer came from the watch.
+        val surface = !wn.isActiveCall && decision.surface && (!event.isPreExisting || wn.isIncomingCall || notifier.isPosted(gated.uid))
         if (surface) notifier.show(wn, alert) else notifier.cancel(gated.uid)
 
         val latency = sourceArrival.remove(gated.uid)?.let { elapsed - it }
@@ -124,6 +171,8 @@ class NotificationEngine(
     }
 
     override fun onNotificationRemoved(uid: Long) {
+        if (!io.wearbridge.watch.BridgeGraph.featuresAvailable) return
+        lastReplayActivity = SystemClock.elapsedRealtime()
         DiagLog.i("notif REMOVED uid=${Redact.uid(uid)}")
         repository.remove(uid)
         notifier.cancel(uid)
@@ -131,6 +180,7 @@ class NotificationEngine(
     }
 
     override fun onAppName(appIdentifier: String, displayName: String) {
+        if (!io.wearbridge.watch.BridgeGraph.featuresAvailable) return
         policy.noteApp(appIdentifier, displayName)
         repository.updateAppName(appIdentifier, displayName)
         // Re-post visible notifications from this app so they show the proper name (silently).
@@ -140,6 +190,7 @@ class NotificationEngine(
     }
 
     override fun onActionResult(uid: Long, action: ActionId, success: Boolean) {
+        if (!io.wearbridge.watch.BridgeGraph.featuresAvailable) return
         repository.setActionStatus(ActionStatus(uid, action, if (success) ActionStatus.State.DONE else ActionStatus.State.FAILED))
         DiagLog.i("action $action uid=${Redact.uid(uid)} success=$success")
     }
@@ -150,5 +201,7 @@ class NotificationEngine(
         val CALL_CATEGORIES = setOf(Category.INCOMING_CALL, Category.MISSED_CALL, Category.ACTIVE_CALL)
         const val ALERT_COALESCE_MS = 1_500L
         const val STALE_PURGE_MS = 5_000L
+        const val REPLAY_QUIET_MS = 1_500L
+        const val REPLAY_MAX_MS = 60_000L
     }
 }

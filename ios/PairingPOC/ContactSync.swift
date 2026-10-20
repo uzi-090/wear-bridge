@@ -15,6 +15,14 @@ final class ContactSync {
     private(set) var authorization = CNContactStore.authorizationStatus(for: .contacts)
     private(set) var syncing = false
     private(set) var progress: Double = 0
+    private(set) var awaitingConfirmation = false
+    private(set) var removalPending = UserDefaults.standard.bool(forKey: "contacts.pendingClear")
+    @ObservationIgnored private var removalNonce: [UInt8] = Array(UserDefaults.standard.data(forKey: "contacts.clearNonce") ?? Data())
+    private(set) var lastError: String?
+    @ObservationIgnored private var syncTask: Task<Void, Never>?
+    @ObservationIgnored private var confirmationTimer: Task<Void, Never>?
+    @ObservationIgnored private var pendingDigests: [String: String]?
+    @ObservationIgnored private var syncEpoch: UInt64 = 0
     private(set) var lastSynced: Date? = UserDefaults.standard.object(forKey: "contacts.lastSynced") as? Date
     /// Contacts on the iPhone that are eligible to sync (after the last fetch).
     private(set) var available: [SyncContact] = []
@@ -132,48 +140,107 @@ final class ContactSync {
     /// The user turned sync on: send everything now.
     func turnOn(link: WatchLink) {
         enabled = true
+        setRemovalPending(false)
         self.link = link
-        guard isAuthorized, link.security == .secure else { return }
+        guard isAuthorized, link.isConnected else { return }
         start(full: true)
+    }
+
+    /// Cancels queued work and discards all selections and sync state belonging to a removed watch.
+    func deviceRemoved() {
+        enabled = false
+        syncEpoch &+= 1
+        syncTask?.cancel(); debounce?.cancel(); confirmationTimer?.cancel()
+        syncing = false; awaitingConfirmation = false
+        awaitingGeneration = nil; pendingDigests = nil
+        setRemovalPending(false)
+        selection = .all; included = []; excluded = []; favorites = []
+        available = []; progress = 0
+        for key in ["contacts.selection", "contacts.included", "contacts.excluded"] { UserDefaults.standard.removeObject(forKey: key) }
+        UserDefaults.standard.removeObject(forKey: "contacts.favorites")
+        lastError = nil
+        link = nil
+        resetState()
     }
 
     /// The user turned sync off: remove every contact from the watch and forget the sync state.
     func turnOff() {
         enabled = false
-        link?.sendContacts(.contactsClear, [])
+        syncEpoch &+= 1
+        syncTask?.cancel(); debounce?.cancel(); confirmationTimer?.cancel()
+        syncing = false; awaitingConfirmation = false
+        awaitingGeneration = nil; pendingDigests = nil
+        setRemovalPending(true)
         resetState()
+        retryRemoval()
     }
 
-    /// Called whenever the watch reports its status (connect, and after each change).
+    private func setRemovalPending(_ pending: Bool) {
+        removalPending = pending
+        UserDefaults.standard.set(pending, forKey: "contacts.pendingClear")
+        if pending && removalNonce.count != 16 {
+            // Use an independent cryptographic nonce, persisted across reconnect/restart.
+            removalNonce = Array(BridgeCrypto.randomNonce())
+            UserDefaults.standard.set(Data(removalNonce), forKey: "contacts.clearNonce")
+        } else if !pending {
+            removalNonce = []; UserDefaults.standard.removeObject(forKey: "contacts.clearNonce")
+        }
+    }
+
+    private func retryRemoval() {
+        guard removalPending, let link, link.isConnected else { return }
+        if removalNonce.count != 16 { setRemovalPending(true) }
+        link.sendContacts(.contactsClear, removalNonce)
+        confirmationTimer?.cancel()
+        confirmationTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled, let self else { return }
+            self.retryRemoval()
+        }
+    }
+
+    /// Authenticated acknowledgement of this exact deletion request, after durable watch storage.
+    func removalConfirmed(_ nonce: [UInt8]) {
+        guard !enabled, removalPending, nonce.count == 16, nonce == removalNonce else { return }
+        setRemovalPending(false); confirmationTimer?.cancel(); lastError = nil
+    }
+
+    /// Generation comes from the watch's durable, authenticated store.
     func watchReported(generation: UInt32, link: WatchLink) {
         self.link = link
-        guard enabled, isAuthorized else { return }
+        if !enabled {
+            if removalPending { retryRemoval() }
+            return
+        }
+        guard isAuthorized, link.isConnected else { return }
         if let awaiting = awaitingGeneration {
-            // Status pushes that left the watch before it committed our last sync still carry the old
-            // generation. Wait for the new one instead of starting another full sync (found on hardware).
-            if generation == awaiting || Date() > awaitingDeadline {
-                awaitingGeneration = nil
-            } else {
-                return
-            }
+            guard generation == awaiting else { return }
+            confirmationTimer?.cancel()
+            awaitingGeneration = nil; awaitingConfirmation = false
+            lastGeneration = generation
+            digests = pendingDigests ?? digests; pendingDigests = nil
+            Self.saveDigests(digests)
+            UserDefaults.standard.set(Int(generation), forKey: "contacts.generation")
+            lastSynced = Date()
+            UserDefaults.standard.set(lastSynced, forKey: "contacts.lastSynced")
+            lastError = nil
+            if pendingChanges { scheduleSync() }
+            return
         }
-        if generation != lastGeneration || generation == 0 {
-            start(full: true)
-        } else if pendingChanges && !syncing {
-            pendingChanges = false
-            start(full: false)
-        }
+        if syncing { return }
+        if generation != lastGeneration || generation == 0 { start(full: true) }
+        else if pendingChanges { pendingChanges = false; start(full: false) }
     }
 
-    /// One sync at a time: `syncing` is set before the task starts, so two status pushes can't both start one.
     private func start(full: Bool) {
-        guard !syncing else { return }
+        guard enabled, !syncing, awaitingGeneration == nil else { return }
         syncing = true
-        Task { await sync(full: full) }
+        pendingChanges = false
+        let epoch = syncEpoch
+        syncTask = Task { await sync(full: full, epoch: epoch) }
     }
 
     @ObservationIgnored private var awaitingGeneration: UInt32?
-    @ObservationIgnored private var awaitingDeadline = Date.distantPast
 
     @ObservationIgnored private var pendingChanges = true // check once per launch
 
@@ -193,68 +260,84 @@ final class ContactSync {
         debounce = Task { [weak self] in
             try? await Task.sleep(for: .seconds(1))
             guard !Task.isCancelled, let self else { return }
-            guard self.enabled, self.isAuthorized, let link = self.link, link.security == .secure,
+            guard self.enabled, self.isAuthorized, let link = self.link, link.isConnected,
                   self.awaitingGeneration == nil, !self.syncing else { return }
             self.pendingChanges = false
             self.start(full: link.watchStatus?.contactsGeneration != self.lastGeneration)
         }
     }
 
-    func refreshAvailable() async {
+    @discardableResult
+    func refreshAvailable() async -> Bool {
+        authorization = CNContactStore.authorizationStatus(for: .contacts)
+        guard isAuthorized else { return false }
         let favs = favorites
-        available = await Task.detached(priority: .utility) { Self.fetch(favorites: favs) }.value
+        do {
+            let fetched = try await Task.detached(priority: .utility) { try Self.fetch(favorites: favs) }.value
+            available = fetched
+            return true
+        } catch {
+            lastError = "Couldn't read contacts. The watch's last confirmed contacts are preserved."
+            return false
+        }
     }
 
-    private func sync(full: Bool) async {
-        defer { syncing = false }
-        guard let link, link.security == .secure else { return }
+    private func sync(full: Bool, epoch: UInt64) async {
+        defer { if epoch == syncEpoch { syncing = false } }
+        guard let link, link.isConnected else { return }
         progress = 0
-        await refreshAvailable()
-        let contacts = onWatch // only the chosen ones; anyone removed is deleted from the watch by the diff
+        guard await refreshAvailable(), enabled, !Task.isCancelled, epoch == syncEpoch else { return }
+        let contacts = onWatch
+        guard contacts.count <= 5000 else { lastError = "Choose at most 5,000 contacts for the watch."; return }
         var newDigests: [String: String] = [:]
         for c in contacts { newDigests[c.id] = Self.digest(c) }
-
         let changed = full ? contacts : contacts.filter { digests[$0.id] != newDigests[$0.id] }
         let removed = full ? [] : digests.keys.filter { newDigests[$0] == nil }
         if !full && changed.isEmpty && removed.isEmpty { return }
+        var candidate = UInt32.random(in: 1...UInt32.max)
+        while candidate == lastGeneration || candidate == 0xDE70DE70 { candidate = UInt32.random(in: 1...UInt32.max) }
+        let generation = candidate
 
-        link.sendContacts(.contactsBegin, ContactsCodec.begin(full: full, count: changed.count))
-        var batch: [SyncContact] = []
-        var size = 0
-        var sent = 0
-        for c in changed {
-            var w = ByteWriter()
-            c.encode(into: &w)
-            if !batch.isEmpty && (size + w.bytes.count > Self.batchBytes || batch.count == 255) {
-                link.sendContacts(.contactsUpsert, ContactsCodec.upsert(batch))
-                sent += batch.count
-                progress = Double(sent) / Double(max(changed.count, 1))
-                batch.removeAll(keepingCapacity: true)
-                size = 0
-                await Task.yield()
+        func send(_ type: BridgeProtocol.MessageType, _ payload: [UInt8]) async -> Bool {
+            guard enabled, epoch == syncEpoch, !Task.isCancelled, link.isConnected else { return false }
+            let ok = await link.sendContactsAndWait(type, payload)
+            if !ok && enabled && epoch == syncEpoch {
+                lastError = "Contact transfer interrupted. Reconnect to retry."
+                pendingChanges = true
             }
-            batch.append(c)
-            size += w.bytes.count
+            return ok && enabled && epoch == syncEpoch && !Task.isCancelled
         }
-        if !batch.isEmpty { link.sendContacts(.contactsUpsert, ContactsCodec.upsert(batch)) }
-        for chunk in stride(from: 0, to: removed.count, by: 200).map({ Array(removed[$0..<min($0 + 200, removed.count)]) }) {
-            link.sendContacts(.contactsDelete, ContactsCodec.delete(chunk))
+        guard await send(.contactsBegin, ContactsCodec.begin(full: full, count: changed.count, deletes: removed.count, transaction: generation)) else { return }
+        var batch: [SyncContact] = []; var size = 0; var sent = 0
+        for contact in changed {
+            var w = ByteWriter(); contact.encode(into: &w)
+            if !batch.isEmpty && (size + w.bytes.count > Self.batchBytes || batch.count == 255) {
+                guard await send(.contactsUpsert, ContactsCodec.upsert(batch)) else { return }
+                sent += batch.count; progress = Double(sent) / Double(max(changed.count, 1))
+                batch.removeAll(keepingCapacity: true); size = 0
+            }
+            batch.append(contact); size += w.bytes.count
         }
-        var generation = UInt32.random(in: 1...UInt32.max)
-        while generation == lastGeneration || generation == 0xDE70DE70 { generation = UInt32.random(in: 1...UInt32.max) }
-        link.sendContacts(.contactsEnd, ContactsCodec.end(generation: generation))
-
-        // If the watch doesn't commit it (link lost mid-way), its generation won't match next time and we resync fully.
-        lastGeneration = generation
-        awaitingGeneration = generation
-        awaitingDeadline = Date().addingTimeInterval(30)
-        UserDefaults.standard.set(Int(generation), forKey: "contacts.generation")
-        digests = newDigests
-        Self.saveDigests(newDigests)
-        lastSynced = Date()
-        UserDefaults.standard.set(lastSynced, forKey: "contacts.lastSynced")
-        progress = 1
-        link.note("contacts: sent full=\(full) changed=\(changed.count) removed=\(removed.count)")
+        if !batch.isEmpty { guard await send(.contactsUpsert, ContactsCodec.upsert(batch)) else { return } }
+        for offset in stride(from: 0, to: removed.count, by: 200) {
+            guard await send(.contactsDelete, ContactsCodec.delete(Array(removed[offset..<min(offset + 200, removed.count)]))) else { return }
+        }
+        guard enabled, epoch == syncEpoch, !Task.isCancelled else { return }
+        awaitingGeneration = generation; pendingDigests = newDigests; awaitingConfirmation = true
+        confirmationTimer?.cancel()
+        confirmationTimer = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled, let self, self.awaitingGeneration == generation else { return }
+            self.awaitingGeneration = nil; self.awaitingConfirmation = false; self.pendingDigests = nil
+            self.lastError = "The watch hasn't confirmed this sync. Retrying when connected."
+            self.pendingChanges = true
+            if self.enabled && self.link?.security == .secure { self.start(full: true) }
+        }
+        let ended = await send(.contactsEnd, ContactsCodec.end(generation: generation, transaction: generation, contacts: contacts))
+        if !ended && awaitingGeneration == generation {
+            confirmationTimer?.cancel(); awaitingGeneration = nil; pendingDigests = nil; awaitingConfirmation = false
+        }
+        if ended { progress = 1; link.note("contacts: transferred full=\(full) changed=\(changed.count) removed=\(removed.count); awaiting commit") }
     }
 
     private func resetState() {
@@ -268,7 +351,7 @@ final class ContactSync {
 
     // MARK: - Reading contacts (off the main thread)
 
-    nonisolated private static func fetch(favorites: Set<String>) -> [SyncContact] {
+    nonisolated private static func fetch(favorites: Set<String>) throws -> [SyncContact] {
         let keys: [CNKeyDescriptor] = [
             CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
             CNContactOrganizationNameKey as CNKeyDescriptor,
@@ -278,7 +361,7 @@ final class ContactSync {
         let request = CNContactFetchRequest(keysToFetch: keys)
         request.sortOrder = .userDefault
         var out: [SyncContact] = []
-        try? CNContactStore().enumerateContacts(with: request) { c, _ in
+        try CNContactStore().enumerateContacts(with: request) { c, _ in
             let name = CNContactFormatter.string(from: c, style: .fullName) ?? c.organizationName
             var phones: [String] = []
             for p in c.phoneNumbers {

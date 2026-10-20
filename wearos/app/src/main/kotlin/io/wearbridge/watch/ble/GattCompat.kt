@@ -39,7 +39,7 @@ fun BluetoothGatt.writeCharacteristicCompat(
 suspend fun BluetoothGatt.enableNotifications(queue: GattOpQueue, characteristic: BluetoothGattCharacteristic): Int {
     if (!setCharacteristicNotification(characteristic, true)) return GattOpQueue.STATUS_NOT_STARTED
     val cccd = characteristic.getDescriptor(CCCD_UUID) ?: return GattOpQueue.STATUS_NOT_STARTED
-    return queue.run(GattOpQueue.Kind.WRITE_DESCRIPTOR) {
+    return queue.run(GattOpQueue.Kind.WRITE_DESCRIPTOR, target = "${characteristic.uuid}/${cccd.uuid}") {
         writeDescriptorCompat(cccd, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
     }.status
 }
@@ -47,7 +47,7 @@ suspend fun BluetoothGatt.enableNotifications(queue: GattOpQueue, characteristic
 /** Reads a characteristic through [queue]. Null on failure. */
 @SuppressLint("MissingPermission")
 suspend fun BluetoothGatt.readValue(queue: GattOpQueue, characteristic: BluetoothGattCharacteristic): ByteArray? {
-    val r = queue.run(GattOpQueue.Kind.READ_CHARACTERISTIC) { readCharacteristic(characteristic) }
+    val r = queue.run(GattOpQueue.Kind.READ_CHARACTERISTIC, target = characteristic.uuid.toString()) { readCharacteristic(characteristic) }
     return if (r.ok) r.value else null
 }
 

@@ -13,6 +13,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0-poc"
+        testInstrumentationRunner = "io.wearbridge.watch.ble.PairingLifecycleInstrumentation"
     }
 
     buildTypes {

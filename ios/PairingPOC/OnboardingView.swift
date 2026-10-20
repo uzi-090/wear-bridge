@@ -36,6 +36,9 @@ struct OnboardingView: View {
         .background(Theme.background)
         .animation(.smooth(duration: 0.35), value: step)
         .animation(.smooth, value: link.phase)
+        .onChange(of: link.isConnected) { _, connected in
+            if !connected && step > 2 { step = 2 }
+        }
     }
 
     @ViewBuilder
@@ -52,7 +55,7 @@ struct OnboardingView: View {
                 if link.phase == .connected && link.security == .secure {
                     Button("Continue") { step += 1 }.buttonStyle(PrimaryButtonStyle())
                 } else {
-                    Button(link.phase.isBusy ? "Looking…" : "Find Watch", action: link.findWatch)
+                    Button(link.phase == .connected ? "Approve on your watch" : (link.phase.isBusy ? "Looking…" : "Find Watch"), action: link.findWatch)
                         .buttonStyle(PrimaryButtonStyle())
                         .disabled(link.phase.isBusy || link.phase == .connected || !link.bluetoothStarted)
                 }
@@ -65,7 +68,13 @@ struct OnboardingView: View {
                 Button("Continue") { step += 1 }.buttonStyle(PrimaryButtonStyle())
             }
             if step > 0 && step < count - 1 {
-                Button("Back") { step -= 1 }
+                Button("Back") {
+                    // Leaving the pairing step abandons an unfinished setup (search, connection or approval).
+                    if step == 2 {
+                        if link.phase == .searching { link.cancelSearch() } else { link.cancelPairing() }
+                    }
+                    step -= 1
+                }
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -95,6 +104,8 @@ private struct ProgressDots: View {
 private struct StepLayout<Art: View, Extra: View>: View {
     let title: String
     let message: String
+    var artHeight: CGFloat = 200
+    var artTopPadding: CGFloat = 36
     @ViewBuilder let art: Art
     @ViewBuilder let extra: Extra
 
@@ -102,8 +113,8 @@ private struct StepLayout<Art: View, Extra: View>: View {
         ScrollView {
             VStack(spacing: 22) {
                 art
-                    .frame(height: 200)
-                    .padding(.top, 36)
+                    .frame(height: artHeight)
+                    .padding(.top, artTopPadding)
                 VStack(spacing: 12) {
                     Text(title)
                         .font(.largeTitle.bold())
@@ -157,21 +168,27 @@ private struct NearbyStep: View {
 
     var body: some View {
         StepLayout(
-            title: link.phase == .connected ? "Connected." : "Bring your Galaxy Watch nearby.",
+            title: link.isConnected ? "Paired and connected." : "Bring your Galaxy Watch nearby.",
             message: link.phase.detail ?? (link.phase == .connected
-                ? "Your watch and iPhone are paired."
-                : "Open Bridge on your watch and keep it close to your iPhone.")
+                ? (link.isConnected ? "Your watch and iPhone are paired." : "Check the matching code and approve on your watch.")
+                : "Open Bridge on your watch and keep it close to your iPhone."),
+            artHeight: 110,
+            artTopPadding: 12
         ) {
-            WatchGlyph(phase: link.phase).frame(width: 170, height: 170)
+            WatchGlyph(phase: link.phase).frame(width: 100, height: 100)
         } extra: {
             VStack(spacing: 12) {
-                StatusPill(phase: link.phase)
+                if link.phase == .connected && !link.isConnected {
+                    Text(link.security.statusTitle).font(.callout)
+                } else {
+                    StatusPill(phase: link.phase)
+                }
                 if link.phase == .connected { SecurityCard(link: link) }
                 if link.phase == .searching && !link.showingAllNearby {
                     Button("Can't find it? Show nearby devices", action: link.showAllNearby)
                         .font(.callout)
                 }
-                if link.phase == .searching && link.showingAllNearby {
+                if link.phase == .searching {
                     NearbyList(items: link.nearby, onChoose: link.choose)
                 }
             }
@@ -318,6 +335,7 @@ struct NearbyList: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            Text("Choose your watch").font(.headline).padding(.vertical, 12)
             ForEach(items) { item in
                 Button { onChoose(item) } label: {
                     HStack {
@@ -329,6 +347,7 @@ struct NearbyList: View {
                     .contentShape(Rectangle())
                 }
                 .foregroundStyle(.primary)
+                .accessibilityIdentifier("nearbyWatch")
                 Divider()
             }
             if items.isEmpty {

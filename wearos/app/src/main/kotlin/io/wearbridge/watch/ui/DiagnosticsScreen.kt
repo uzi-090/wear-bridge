@@ -29,6 +29,7 @@ import io.wearbridge.watch.ui.theme.surface
 @Composable
 fun DiagnosticsScreen() {
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
+    val pairing by BridgeGraph.pairing.state.collectAsStateWithLifecycle()
     val entries by DiagLog.entries.collectAsStateWithLifecycle()
     val media by BridgeGraph.media.collectAsStateWithLifecycle()
     val appConnected by BridgeGraph.phoneAppConnected.collectAsStateWithLifecycle()
@@ -73,6 +74,7 @@ fun DiagnosticsScreen() {
                 }
             }
         }
+        if (pairing.canAccess(link)) {
         item { SectionHeader("Events", spec) }
         entries.asReversed().take(120).forEachIndexed { i, line ->
             item(key = "e$i") {
@@ -83,6 +85,7 @@ fun DiagnosticsScreen() {
                     modifier = morph(spec).padding(horizontal = 10.dp, vertical = 1.dp),
                 )
             }
+        }
         }
     }
 }

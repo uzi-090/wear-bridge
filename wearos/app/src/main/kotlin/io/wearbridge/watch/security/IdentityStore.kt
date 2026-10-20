@@ -30,7 +30,7 @@ class IdentityStore(context: Context) {
     val privateKey: PrivateKey
 
     private val _trusted = MutableStateFlow(prefs.getStringSet(KEY_TRUSTED, emptySet()).orEmpty())
-    /** Hex X9.63 public keys of iPhone apps the user allowed. */
+    /** Hex X9.63 public key of the iPhone app the user allowed (at most one). */
     val trusted: StateFlow<Set<String>> = _trusted
 
     init {
@@ -58,16 +58,21 @@ class IdentityStore(context: Context) {
 
     fun isTrusted(iphoneKey: ByteArray): Boolean = iphoneKey.hex() in _trusted.value
 
+    /**
+     * Allows [iphoneKey] as the one paired iPhone app. A previous app key is dropped: a new key
+     * means Bridge on the iPhone was reinstalled or removed this watch, so the old one is dead.
+     * Committed synchronously, so a restart right after approval can't restore pairing without trust.
+     */
     fun trust(iphoneKey: ByteArray) {
-        val next = _trusted.value + iphoneKey.hex()
-        prefs.edit().putStringSet(KEY_TRUSTED, next).apply()
+        val next = setOf(iphoneKey.hex())
+        check(prefs.edit().putStringSet(KEY_TRUSTED, next).commit())
         _trusted.value = next
     }
 
     /** Forgets every allowed iPhone app. They'll need to be allowed again. */
     fun forgetAll() {
-        prefs.edit().remove(KEY_TRUSTED).apply()
         _trusted.value = emptySet()
+        check(prefs.edit().remove(KEY_TRUSTED).commit())
     }
 
     private fun wrappingKey(): SecretKey {

@@ -35,11 +35,12 @@ class ApprovalNotifier(private val context: Context) : SecureLink.ApprovalPrompt
             context, 50, Intent(context, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
+        val displayedCode = code.chunked(3).joinToString(" ")
         val n = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_bridge)
             .setContentTitle("Allow Bridge on iPhone?")
-            .setContentText("Check that your iPhone shows $code")
-            .setStyle(NotificationCompat.BigTextStyle().bigText("Check that your iPhone shows $code, then allow it."))
+            .setContentText("Check that your iPhone shows $displayedCode")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("Check that your iPhone shows $displayedCode, then allow it."))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setOngoing(true)

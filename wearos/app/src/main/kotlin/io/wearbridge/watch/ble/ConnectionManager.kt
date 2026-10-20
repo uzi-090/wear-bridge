@@ -83,14 +83,40 @@ class ConnectionManager(
         },
         log = DiagLog::i,
     )
-    private val secureLink: SecureLink = SecureLink(peripheral, BridgeGraph.identity, BridgeGraph.approvals) { device ->
-        settingsChannel.onAuthenticated(device)
-        deviceChannel.onAuthenticated(device)
+    private val secureLink: SecureLink = SecureLink(peripheral, BridgeGraph.identity, BridgeGraph.approvals, onApprovalRequired = { request ->
+        // A new app key means Bridge on the iPhone was reinstalled or removed this watch while it
+        // was away: the old approval is dead, so revoke it now rather than after the user answers.
+        runCatching { BridgeGraph.identity.forgetAll() }.onFailure { DiagLog.w("trust reset failed ${it::class.simpleName}") }
+        BridgeGraph.pairing.setNotice(null)
+        BridgeGraph.pairing.set(BridgeGraph.pairing.state.value.begin())
+        if (sm.snapshot.state == LinkState.READY) dispatch(LinkEvent.SetupFailed)
+        approvalTimeout?.cancel()
+        approvalTimeout = scope.launch { delay(APPROVAL_TIMEOUT_MS); post(Msg.ApprovalExpired(request)) }
+    }) { device ->
+        approvalTimeout?.cancel()
+        val approved = BridgeGraph.pairing.state.value.approved(device.address)
+        BridgeGraph.pairing.set(approved)
+        if (approved.phase == PairingPhase.PAIRED) {
+            settingsChannel.onAuthenticated(device)
+            deviceChannel.onAuthenticated(device)
+            if (sm.snapshot.state == LinkState.SUBSCRIBING) subscribe()
+        }
     }
     private val settingsChannel: SettingsChannel = SettingsChannel(peripheral, secureLink, BridgeGraph.policy, BridgeGraph.icons, BridgeGraph.settings, scope)
-    private val deviceChannel: DeviceChannel = DeviceChannel(peripheral, secureLink, scope, appVersion(context))
-    private val contactsChannel = ContactsChannel(secureLink, BridgeGraph.contacts)
+    private val deviceChannel: DeviceChannel = DeviceChannel(peripheral, secureLink, scope, appVersion(context), context) { post(Msg.Lifecycle(it)) }
+    private val contactsChannel = ContactsChannel(secureLink, BridgeGraph.contacts) { nonce ->
+        deviceChannel.sendEvent(io.wearbridge.protocol.ContactsMessageType.CLEARED, nonce)
+    }
     private var findPhoneTimeout: Job? = null
+    private var removal: BridgeCodec.Lifecycle? = null
+    private var removalGeneration = 0L
+    private var removalTimeout: Job? = null
+    private var removalRemote = false
+    /** The pairing phase when removal started: cancelling setup isn't the same as unpairing. */
+    private var removalFrom = PairingPhase.PAIRED
+    private var cleanupFailed = false
+    private var approvalTimeout: Job? = null
+
 
     private var device: BluetoothDevice? = null
     private var session: GattSession? = null
@@ -117,8 +143,13 @@ class ConnectionManager(
         data class ContactsChunk(val device: BluetoothDevice, val value: ByteArray) : Msg
         data class CallRequest(val phone: String, val name: String) : Msg
         data class Approve(val allow: Boolean) : Msg
+        data class ApprovalExpired(val request: Int) : Msg
         data class Media(val command: RemoteCommand) : Msg
         data class Foreground(val on: Boolean) : Msg
+        data object Pair : Msg
+        data class Lifecycle(val value: BridgeCodec.Lifecycle) : Msg
+        data class Remove(val forget: Boolean) : Msg
+        data class FinishRemoval(val generation: Long) : Msg
         data object Shutdown : Msg
     }
 
@@ -142,7 +173,8 @@ class ConnectionManager(
                 when {
                     !BridgePermissions.hasRequired(context) -> LinkEvent.PermissionMissing
                     adapter?.isEnabled != true -> LinkEvent.BluetoothOff
-                    else -> LinkEvent.Start
+                    BridgeGraph.pairing.state.value.enabled -> LinkEvent.Start
+                    else -> LinkEvent.Stop
                 },
             ),
         )
@@ -156,6 +188,8 @@ class ConnectionManager(
     fun performAction(uid: Long, action: ActionId) = post(Msg.Action(uid, action))
 
     fun reconnect() = post(Msg.Link(LinkEvent.UserReconnect))
+    fun pairDevice() = post(Msg.Pair)
+    fun removeDevice(forget: Boolean) = post(Msg.Remove(forget))
 
     fun mediaCommand(command: RemoteCommand) = post(Msg.Media(command))
 
@@ -181,8 +215,31 @@ class ConnectionManager(
         if (msg !is Msg.Link && msg !is Msg.BondState && msg !is Msg.Foreground && msg !is Msg.Shutdown) power.activity()
         when (msg) {
             is Msg.Foreground -> power.setForeground(msg.on)
-            is Msg.Link -> dispatch(msg.event)
+            // BridgeGraph.pairIphone has already entered PAIRING; start advertising if the link is idle.
+            Msg.Pair -> if (removal == null && BridgeGraph.pairing.state.value.phase == PairingPhase.PAIRING) {
+                dispatch(when {
+                    !BridgePermissions.hasRequired(context) -> LinkEvent.PermissionMissing
+                    adapter?.isEnabled != true -> LinkEvent.BluetoothOff
+                    else -> LinkEvent.Start
+                })
+            }
+            is Msg.Remove -> beginRemoval(BridgeCodec.Lifecycle(msg.forget, false), remote = false)
+            is Msg.Lifecycle -> {
+                if (msg.value.acknowledgement) {
+                    if (removal?.forget == msg.value.forget) finishRemoval(confirmed = true)
+                } else beginRemoval(msg.value, remote = true)
+            }
+            is Msg.FinishRemoval -> if (msg.generation == removalGeneration) finishRemoval()
+            is Msg.Link -> {
+                if (msg.event == LinkEvent.Stop || msg.event == LinkEvent.BluetoothOff || msg.event == LinkEvent.PermissionMissing ||
+                    BridgeGraph.pairing.state.value.enabled) dispatch(msg.event)
+            }
             is Msg.CentralConnected -> {
+                if (!accepts(msg.device.address)) {
+                    DiagLog.i("rejecting central ${Redact.device(msg.device)} pairing=${BridgeGraph.pairing.state.value.phase}")
+                    peripheral.disconnect(msg.device)
+                    return
+                }
                 val waiting = sm.snapshot.state in setOf(LinkState.ADVERTISING, LinkState.RECONNECTING, LinkState.ERROR)
                 val current = device
                 when {
@@ -195,8 +252,10 @@ class ConnectionManager(
                         device = msg.device
                         dispatch(LinkEvent.CentralConnected)
                     }
-                    current != null && current.address != msg.device.address ->
+                    current != null && current.address != msg.device.address -> {
                         DiagLog.i("ignoring second central ${Redact.device(msg.device)}")
+                        peripheral.disconnect(msg.device)
+                    }
                 }
             }
             is Msg.CentralDisconnected -> {
@@ -205,26 +264,44 @@ class ConnectionManager(
                 settingsChannel.onDisconnected(msg.device)
                 deviceChannel.onDisconnected(msg.device)
                 if (msg.device.address == device?.address) {
+                    if (removal != null) { finishRemoval(); return }
                     device = null
                     dispatch(LinkEvent.CentralDisconnected)
                 }
             }
-            is Msg.SettingsChunk -> settingsChannel.onChunk(msg.device, msg.value)
-            is Msg.Subscription -> when (msg.characteristic) {
+            is Msg.SettingsChunk -> if (BridgeGraph.pairing.state.value.phase == PairingPhase.PAIRED && msg.device.address == device?.address) settingsChannel.onChunk(msg.device, msg.value)
+            is Msg.Subscription -> if (msg.device.address == device?.address) when (msg.characteristic) {
                 BridgeUuids.SETTINGS -> settingsChannel.onSubscription(msg.device, msg.subscribed)
-                BridgeUuids.AUTH -> Unit // answers go out when a HELLO arrives
+                // Answers go out when a HELLO arrives. Unsubscribing withdraws a waiting request, so
+                // a code still on the watch can't approve an iPhone app that cancelled setup.
+                BridgeUuids.AUTH -> if (!msg.subscribed && secureLink.withdraw(msg.device)) {
+                    approvalTimeout?.cancel()
+                    BridgeGraph.pairing.setNotice("Pairing cancelled on iPhone.")
+                }
                 else -> deviceChannel.onSubscription(msg.device, msg.characteristic, msg.subscribed)
             }
-            is Msg.AuthChunk -> secureLink.onAuthChunk(msg.device, msg.value)
-            is Msg.ContactsChunk -> contactsChannel.onChunk(msg.device, msg.value)
+            is Msg.AuthChunk -> if (removal == null && accepts(msg.device.address) && msg.device.address == device?.address) secureLink.onAuthChunk(msg.device, msg.value)
+            is Msg.ContactsChunk -> if (BridgeGraph.pairing.state.value.phase == PairingPhase.PAIRED && msg.device.address == device?.address) contactsChannel.onChunk(msg.device, msg.value)
             is Msg.CallRequest -> {
+                if (!BridgeGraph.featuresAvailable) return
                 val sent = deviceChannel.sendEvent(BridgeMessageType.CALL_REQUEST, BridgeCodec.encodeCallRequest(msg.phone, msg.name))
                 BridgeGraph.callRequestFlow.value = if (sent) CallRequestState.SENT else CallRequestState.NO_APP
                 DiagLog.i("call request sent=$sent")
             }
-            is Msg.Approve -> secureLink.approve(msg.allow)
-            is Msg.ControlChunk -> deviceChannel.onControlChunk(msg.device, msg.value)
-            is Msg.Event -> deviceChannel.sendEvent(msg.type, msg.payload)
+            is Msg.Approve -> if (removal == null && BridgeGraph.pairing.state.value.phase == PairingPhase.PAIRING &&
+                BridgeGraph.pendingApproval.value != null) {
+                approvalTimeout?.cancel()
+                // A newly approved app starts a new relationship: nothing synced for an earlier one carries over.
+                if (msg.allow) clearPeerData()
+                secureLink.approve(msg.allow)
+                BridgeGraph.pairing.setNotice(if (msg.allow) null else
+                    "Pairing declined. Tap Ask Again in Bridge on iPhone, or Cancel pairing here.")
+            }
+            is Msg.ApprovalExpired -> if (secureLink.expire(msg.request)) {
+                BridgeGraph.pairing.setNotice("Approval timed out. Tap Ask Again in Bridge on iPhone, or Cancel pairing here.")
+            }
+            is Msg.ControlChunk -> if (msg.device.address == device?.address) deviceChannel.onControlChunk(msg.device, msg.value)
+            is Msg.Event -> if (BridgeGraph.featuresAvailable) deviceChannel.sendEvent(msg.type, msg.payload)
             is Msg.FindPhone -> ringPhone(msg.ring)
             is Msg.ClientDisconnected -> if (device != null && msg.session === session) {
                 DiagLog.i("gatt client dropped status=${msg.status}")
@@ -244,16 +321,36 @@ class ConnectionManager(
                 }
             }
             is Msg.Media -> {
-                val c = ams
+                val c = ams.takeIf { BridgeGraph.featuresAvailable }
                 if (c == null) {
                     DiagLog.i("media ${msg.command} unavailable")
                 } else {
                     scope.launch { DiagLog.i("media ${msg.command} ${c.send(msg.command)}") }
                 }
             }
-            is Msg.BondState -> pairing.onBondStateChanged(msg.device, msg.state, msg.previous)
+            is Msg.BondState -> {
+                val current = msg.device.address == device?.address
+                if ((current || msg.device.address == BridgeGraph.pairing.state.value.address) && msg.state == BluetoothDevice.BOND_NONE &&
+                    msg.previous == BluetoothDevice.BOND_BONDED) {
+                    // The system pairing was forgotten in Bluetooth settings on either device. That
+                    // isn't an app Unpair: approval stays with the iPhone app's key, and the phone
+                    // can pair again at the system level (with a new address) and reconnect.
+                    DiagLog.i("system bond removed ${Redact.device(msg.device)} current=$current")
+                    // Invalidate authentication now, before any queued old CONTROL can refill battery.
+                    secureLink.onDisconnected(msg.device)
+                    deviceChannel.onDisconnected(msg.device)
+                    settingsChannel.onDisconnected(msg.device)
+                    contactsChannel.onDisconnected(msg.device)
+                    // Re-advertise for discovery; don't drop a different phone that's mid-setup.
+                    if (removal == null && BridgeGraph.pairing.state.value.enabled && (current || device == null) &&
+                        sm.snapshot.state != LinkState.DISCONNECTED) {
+                        peripheral.stopAdvertising()
+                        dispatch(LinkEvent.BondRemoved)
+                    }
+                } else pairing.onBondStateChanged(msg.device, msg.state, msg.previous)
+            }
             is Msg.Action -> {
-                val ok = engine.canPerform(msg.uid, msg.action) && ancs?.session?.performAction(msg.uid, msg.action) == true
+                val ok = BridgeGraph.featuresAvailable && engine.canPerform(msg.uid, msg.action) && ancs?.session?.performAction(msg.uid, msg.action) == true
                 repository.setActionStatus(
                     ActionStatus(msg.uid, msg.action, if (ok) ActionStatus.State.SENDING else ActionStatus.State.UNAVAILABLE),
                 )
@@ -265,6 +362,99 @@ class ConnectionManager(
                 scope.cancel()
             }
         }
+    }
+
+    private fun clearLiveData() {
+        BridgeGraph.mediaFlow.value = null
+        BridgeGraph.phoneBatteryFlow.value = null
+        BridgeGraph.phoneChargingFlow.value = null
+        BridgeGraph.phoneModelFlow.value = null
+        BridgeGraph.phoneNameFlow.value = null
+        BridgeGraph.phoneStatusReportedAt = 0
+        BridgeGraph.findPhoneFlow.value = FindPhoneState.IDLE
+        BridgeGraph.callRequestFlow.value = CallRequestState.IDLE
+        findPhoneTimeout?.cancel()
+        BridgeGraph.findWatch.stop(fromUser = false)
+        io.wearbridge.watch.battery.LowBatteryAlerts.disconnected(context)
+    }
+
+    /** Data synced for a previous iPhone app. Failures are logged; the new approval still proceeds. */
+    private fun clearPeerData() {
+        engine.onLinkReset()
+        listOf<() -> Unit>(BridgeGraph.contacts::forgetDevice, repository::forgetDevice,
+            BridgeGraph.policy::forgetDevice, BridgeGraph.icons::clear).forEach { cleanup ->
+            runCatching(cleanup).onFailure { DiagLog.w("previous device data cleanup failed ${it::class.simpleName}") }
+        }
+    }
+
+    private fun accepts(address: String) = BridgeGraph.pairing.state.value.accepts(address, savedBonded())
+
+    /** Whether the saved iPhone still has a system bond (unknown counts as bonded, the strict choice). */
+    private fun savedBonded(): Boolean {
+        val saved = BridgeGraph.pairing.state.value.address ?: return false
+        return runCatching { adapter?.bondedDevices?.any { it.address == saved } }.getOrNull() ?: true
+    }
+
+    private fun beginRemoval(value: BridgeCodec.Lifecycle, remote: Boolean) {
+        if (removal != null) return
+        val generation = ++removalGeneration
+        removal = value
+        removalFrom = BridgeGraph.pairing.state.value.phase
+        DiagLog.i("device removal started forget=${value.forget} remote=$remote from=$removalFrom")
+        removalRemote = remote
+        cleanupFailed = false
+        approvalTimeout?.cancel()
+        BridgeGraph.pairing.beginRemoval(value.forget)
+        BridgeGraph.pairing.setNotice(null)
+        closeClient()
+        engine.onLinkReset()
+        repository.forgetDevice()
+        clearLiveData()
+        device?.let {
+            contactsChannel.onDisconnected(it)
+            settingsChannel.onDisconnected(it)
+        }
+        listOf<() -> Unit>(BridgeGraph.identity::forgetAll, BridgeGraph.contacts::forgetDevice,
+            BridgeGraph.policy::forgetDevice, BridgeGraph.icons::clear).forEach { cleanup ->
+            runCatching(cleanup).onFailure {
+                cleanupFailed = true
+                DiagLog.w("device cleanup failed ${it::class.simpleName}")
+            }
+        }
+        device?.let(peripheral::discardPendingNotifications)
+        val sent = deviceChannel.sendEvent(BridgeMessageType.DEVICE_LIFECYCLE_EVENT,
+            BridgeCodec.encodeLifecycle(value.copy(acknowledgement = remote)))
+        DiagLog.i("device removal message queued=$sent acknowledgement=$remote")
+        // A received request gets an application ACK. Wait for the phone to disconnect after reading it.
+        // A local request waits for the phone's ACK; the timeout only completes local removal.
+        if (!sent) finishRemoval()
+        else removalTimeout = scope.launch { delay(5_000); post(Msg.FinishRemoval(generation)) }
+    }
+
+    private fun finishRemoval(confirmed: Boolean = false) {
+        val value = removal ?: return
+        DiagLog.i("device removal finished forget=${value.forget} confirmed=$confirmed remote=$removalRemote cleanupFailed=$cleanupFailed")
+        removalTimeout?.cancel()
+        BridgeGraph.pairing.completeRemoval(value.forget, !cleanupFailed)
+        BridgeGraph.pairing.setNotice(when {
+            cleanupFailed -> "Unpaired. Some saved data could not be deleted. Try Forget Device again."
+            confirmed || removalRemote -> if (value.forget) "Forgotten on both devices."
+                else "Unpaired on both. Your iPhone stays saved."
+            // Nothing was paired yet, so there's nothing for the iPhone to confirm.
+            removalFrom == PairingPhase.UNPAIRED -> "Saved iPhone removed."
+            removalFrom == PairingPhase.PAIRING -> if (value.forget) "Pairing cancelled. Saved iPhone removed." else "Pairing cancelled."
+            else -> if (value.forget) "Couldn't confirm iPhone removal. Forget this watch in Bridge on iPhone too."
+                else "Couldn't confirm iPhone removal. Unpair in Bridge on iPhone too."
+        })
+        secureLink.reset()
+        device?.let {
+            contactsChannel.onDisconnected(it)
+            settingsChannel.onDisconnected(it)
+            deviceChannel.onDisconnected(it)
+        }
+        BridgeGraph.phoneAppConnectedFlow.value = false
+        dispatch(LinkEvent.Stop)
+        removal = null
     }
 
     private fun dispatch(event: LinkEvent) {
@@ -282,10 +472,16 @@ class ConnectionManager(
 
     private fun execute(effect: LinkEffect) {
         when (effect) {
+            // Lead with the Bridge service whenever the iPhone has to find this watch by scanning:
+            // during setup, and after the system bond was forgotten (iOS can't recognise it then).
             LinkEffect.StartAdvertising ->
-                if (peripheral.open()) peripheral.startAdvertising() else post(Msg.Link(LinkEvent.AdvertisingFailed(unsupported = false)))
+                if (peripheral.open()) peripheral.startAdvertising(
+                    discoveryFirst = BridgeGraph.pairing.state.value.phase == PairingPhase.PAIRING || !savedBonded(),
+                ) else post(Msg.Link(LinkEvent.AdvertisingFailed(unsupported = false)))
             LinkEffect.StopAdvertising -> peripheral.stopAdvertising()
             LinkEffect.ClosePeripheral -> {
+                secureLink.reset()
+                BridgeGraph.phoneAppConnectedFlow.value = false
                 peripheral.close()
                 device = null // closing the server drops every link, and no per-device callback follows
             }
@@ -295,6 +491,7 @@ class ConnectionManager(
             LinkEffect.CreateBond -> device?.let(pairing::request)
             LinkEffect.Subscribe -> subscribe()
             LinkEffect.ResetSession -> {
+                clearLiveData()
                 ancs?.session?.reset()
                 engine.onLinkReset()
                 BridgeGraph.mediaFlow.value = null
@@ -302,7 +499,13 @@ class ConnectionManager(
                 BridgeGraph.phoneChargingFlow.value = null
             }
             LinkEffect.DisconnectCentral -> {
-                device?.let(peripheral::disconnect)
+                device?.let {
+                    secureLink.onDisconnected(it)
+                    contactsChannel.onDisconnected(it)
+                    settingsChannel.onDisconnected(it)
+                    deviceChannel.onDisconnected(it)
+                    peripheral.disconnect(it)
+                }
                 device = null
             }
             is LinkEffect.ScheduleRetry -> reconnection.schedule(effect.delayMs)
@@ -317,6 +520,7 @@ class ConnectionManager(
         setupJob = scope.launch {
             BridgeGraph.phoneNameFlow.value = runCatching { d.name }.getOrNull()
             val status = s.connect()
+            if (session !== s) return@launch
             if (status != 0) {
                 DiagLog.w("gatt client connect failed status=$status")
                 dispatch(LinkEvent.SetupFailed)
@@ -331,6 +535,7 @@ class ConnectionManager(
         power.onDown()
         setupJob?.cancel()
         pairing.cancel()
+        ancs?.session?.reset()
         ancs = null
         ams = null
         phoneServices = null
@@ -343,6 +548,7 @@ class ConnectionManager(
         setupJob?.cancel()
         setupJob = scope.launch {
             val r = s.discover()
+            if (session !== s) return@launch
             if (!r.ok) {
                 DiagLog.w("discovery failed status=${r.status}")
                 dispatch(LinkEvent.SetupFailed)
@@ -352,16 +558,37 @@ class ConnectionManager(
             DiagLog.i("services=${r.serviceCount} ancs=${r.hasAncs} bonded=$bonded")
             // Service UUIDs are public protocol identifiers (no personal data). Logged to document what iOS exposes.
             DiagLog.i("iPhone services: ${r.services.joinToString(" ") { Redact.serviceName(it) }}")
-            dispatch(LinkEvent.ServicesDiscovered(r.hasAncs, bonded))
+            dispatch(LinkEvent.ServicesDiscovered(r.hasAncs, bonded, r.serviceCount))
         }
     }
 
     private fun subscribe() {
-        val client = session?.ancsClient(scope, engine) ?: return post(Msg.Link(LinkEvent.SetupFailed))
+        val pairingState = BridgeGraph.pairing.state.value
+        if (pairingState.phase != PairingPhase.PAIRED || pairingState.address != device?.address) return
+        val s = session ?: return post(Msg.Link(LinkEvent.SetupFailed))
+        // ANCS write completions run asynchronously. An old client must never publish into a new
+        // paired phone's repository, even if the new link has already become READY.
+        val listener = object : io.wearbridge.ancs.AncsSession.Listener by engine {
+            private fun current() = session === s && BridgeGraph.featuresAvailable
+            override fun onNotification(notification: io.wearbridge.ancs.AncsNotification,
+                event: io.wearbridge.ancs.NotificationSourceEvent) {
+                if (current()) engine.onNotification(notification, event)
+            }
+            override fun onNotificationRemoved(uid: Long) { if (current()) engine.onNotificationRemoved(uid) }
+            override fun onAppName(appIdentifier: String, displayName: String) {
+                if (current()) engine.onAppName(appIdentifier, displayName)
+            }
+            override fun onActionResult(uid: Long, action: ActionId, success: Boolean) {
+                if (current()) engine.onActionResult(uid, action, success)
+            }
+        }
+        val client = s.ancsClient(scope, listener) ?: return post(Msg.Link(LinkEvent.SetupFailed))
         setupJob?.cancel()
         ancs = client
         setupJob = scope.launch {
-            when (val r = client.subscribe()) {
+            val r = client.subscribe()
+            if (session !== s) return@launch
+            when (r) {
                 AncsClient.SubscribeResult.OK -> {
                     DiagLog.i("ancs subscribed")
                     dispatch(LinkEvent.Subscribed)
@@ -389,7 +616,7 @@ class ConnectionManager(
             return
         }
         val state = when {
-            sm.snapshot.state != LinkState.READY -> FindPhoneState.NO_LINK
+            !BridgeGraph.featuresAvailable -> FindPhoneState.NO_LINK
             !deviceChannel.sendEvent(BridgeMessageType.FIND_PHONE, BridgeCodec.encodeSwitch(true)) -> FindPhoneState.NO_APP
             else -> FindPhoneState.RINGING
         }
@@ -411,7 +638,7 @@ class ConnectionManager(
         scope.launch {
             val media = s.amsClient(object : AmsClient.Listener {
                 override fun onNowPlaying(state: NowPlaying) {
-                    if (BridgeGraph.demoMode) return // debug screenshots show fake media only
+                    if (session !== s || BridgeGraph.demoMode) return // reject obsolete session updates
                     val before = BridgeGraph.mediaFlow.value
                     if (state.playerName.isNotBlank() && state.playerName != before?.playerName) {
                         // Remember the player's bundle ID (when known) so the iPhone app sends its official icon.
@@ -427,13 +654,15 @@ class ConnectionManager(
             if (media != null && media.start()) {
                 if (session === s) ams = media
                 // With nothing playing, iOS sends no initial values: AMS works, there's just no player yet.
-                if (BridgeGraph.mediaFlow.value == null && !BridgeGraph.demoMode) BridgeGraph.mediaFlow.value = NowPlaying()
+                if (session === s && BridgeGraph.mediaFlow.value == null && !BridgeGraph.demoMode) BridgeGraph.mediaFlow.value = NowPlaying()
                 DiagLog.i("ams ready")
             } else {
                 DiagLog.i("ams unavailable")
             }
+            if (session !== s) return@launch
             val phone = s.phoneServices(object : PhoneServicesClient.Listener {
                 override fun onPhoneBattery(percent: Int) {
+                    if (session !== s) return
                     val previous = BridgeGraph.phoneBatteryFlow.value
                     BridgeGraph.phoneBatteryFlow.value = percent
                     // Without a recent report from the iPhone app, infer charging from the trend.
@@ -441,8 +670,12 @@ class ConnectionManager(
                     if (!appReportedRecently && previous != null && percent != previous) {
                         BridgeGraph.phoneChargingFlow.value = percent > previous
                     }
+                    // BAS has no charging flag. Only a fresh companion report can authorize a warning.
+                    io.wearbridge.watch.battery.LowBatteryAlerts.receive(context, s.device.address, percent,
+                        BridgeGraph.phoneChargingFlow.value.takeIf { appReportedRecently })
                 }
                 override fun onPhoneModel(model: String) {
+                    if (session !== s) return
                     BridgeGraph.phoneModelFlow.value = model
                 }
             })
@@ -524,6 +757,9 @@ class ConnectionManager(
 }
 
 private const val FIND_PHONE_MS = 30_000L
+
+/** How long a matching-code request waits for an answer on the watch (the code screen stays on as long). */
+private const val APPROVAL_TIMEOUT_MS = 120_000L
 
 /** An iPhone app report outranks the battery-trend guess for this long (it re-reports on every change). */
 private const val APP_POWER_TRUST_MS = 10 * 60_000L

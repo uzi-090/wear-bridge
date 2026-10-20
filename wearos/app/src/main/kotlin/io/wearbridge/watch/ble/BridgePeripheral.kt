@@ -14,6 +14,8 @@ import android.bluetooth.le.AdvertiseData
 import android.bluetooth.le.AdvertiseSettings
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.ParcelUuid
 import io.wearbridge.ancs.AncsUuids
 import io.wearbridge.watch.diagnostics.DiagLog
@@ -58,7 +60,11 @@ class BridgePeripheral(
     private val mtus = java.util.concurrent.ConcurrentHashMap<String, Int>()
     private class Outgoing(val device: BluetoothDevice, val characteristic: java.util.UUID, val value: ByteArray)
     private val notifyQueue = ArrayDeque<Outgoing>()
-    private var notifyInFlight = false
+    private var notifyInFlight: Outgoing? = null
+    private var notifyBroken = false
+    private val notifyHandler = Handler(Looper.getMainLooper())
+    private var notifyDeadline: Runnable? = null
+    @Volatile private var serverEpoch = 0L
 
     /** The ATT MTU is per link, so the MTU our GATT client negotiated with the iPhone applies here too. */
     fun recordMtu(device: BluetoothDevice, mtu: Int) {
@@ -80,18 +86,27 @@ class BridgePeripheral(
      */
     fun notify(device: BluetoothDevice, characteristic: java.util.UUID, chunks: List<ByteArray>) {
         synchronized(notifyQueue) {
+            if (notifyBroken || server == null) return
+            if (notifyQueue.sumOf { it.value.size } + chunks.sumOf { it.size } > 262_144) {
+                failNotifications(device); return
+            }
             chunks.forEach { notifyQueue.addLast(Outgoing(device, characteristic, it)) }
-            if (!notifyInFlight) sendNextNotification()
+            if (notifyInFlight == null) sendNextNotification()
         }
     }
 
+    /** Removal takes priority over obsolete queued snapshots; the outstanding ATT notification drains. */
+    fun discardPendingNotifications(device: BluetoothDevice) {
+        synchronized(notifyQueue) { notifyQueue.removeAll { it.device.address == device.address } }
+    }
+
     private fun sendNextNotification() {
-        val next = notifyQueue.removeFirstOrNull() ?: run { notifyInFlight = false; return }
+        val next = notifyQueue.removeFirstOrNull() ?: run { notifyInFlight = null; return }
         val device = next.device
         val value = next.value
         val characteristic = server?.getService(BridgeUuids.SERVICE)?.getCharacteristic(next.characteristic)
-            ?: run { notifyQueue.clear(); notifyInFlight = false; return }
-        notifyInFlight = true
+            ?: run { failNotifications(device); return }
+        notifyInFlight = next
         val started = try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 server?.notifyCharacteristicChanged(device, characteristic, false, value) == android.bluetooth.BluetoothStatusCodes.SUCCESS
@@ -102,18 +117,40 @@ class BridgePeripheral(
                 server?.notifyCharacteristicChanged(device, characteristic, false) == true
             }
         } catch (e: RuntimeException) {
-            // e.g. IllegalArgumentException for an oversized value: drop this message, never the link.
+            // The receiver cannot acknowledge a complete message after a rejected chunk.
             DiagLog.w("bridge notify threw ${e::class.simpleName} size=${value.size}")
             false
         }
         if (!started) {
-            DiagLog.w("bridge notify refused, dropping ${notifyQueue.size + 1} chunks")
-            notifyQueue.clear()
-            notifyInFlight = false
+            DiagLog.w("bridge notify refused; rebuilding the session")
+            failNotifications(device)
+        } else {
+            val epoch = serverEpoch
+            notifyDeadline = Runnable {
+                synchronized(notifyQueue) {
+                    if (serverEpoch == epoch && notifyInFlight === next) {
+                        DiagLog.w("bridge notify timed out; rebuilding the session")
+                        failNotifications(device)
+                    }
+                }
+            }.also { notifyHandler.postDelayed(it, 10_000) }
+        }
+    }
+
+    /** Called under the queue lock. Rebuild outside it to keep the lock order consistent. */
+    private fun failNotifications(device: BluetoothDevice) {
+        if (notifyBroken) return
+        notifyBroken = true
+        notifyDeadline?.let(notifyHandler::removeCallbacks); notifyDeadline = null
+        notifyQueue.clear(); notifyInFlight = null
+        val epoch = serverEpoch
+        notifyHandler.post {
+            if (serverEpoch == epoch) { close(); listener.onCentralDisconnected(device) }
         }
     }
     @Volatile private var advertiseWanted = false
     @Volatile private var advertising = false
+    @Volatile private var discoveryFirst = false
 
     val supportsAdvertising: Boolean
         get() = manager.adapter?.let { it.isEnabled && it.bluetoothLeAdvertiser != null && it.isMultipleAdvertisementSupported } == true
@@ -122,7 +159,7 @@ class BridgePeripheral(
     @Synchronized
     fun open(): Boolean {
         if (server != null) return true
-        val s = manager.openGattServer(context, serverCallback) ?: return false.also { DiagLog.w("openGattServer returned null") }
+        val s = manager.openGattServer(context, serverCallback(++serverEpoch)) ?: return false.also { DiagLog.w("openGattServer returned null") }
         server = s
         serviceReady = false
         if (!s.addService(buildService())) {
@@ -133,7 +170,8 @@ class BridgePeripheral(
     }
 
     @Synchronized
-    fun startAdvertising() {
+    fun startAdvertising(discoveryFirst: Boolean = false) {
+        this.discoveryFirst = discoveryFirst
         advertiseWanted = true
         if (serviceReady) startAdvertisingInternal()
         // Otherwise it starts from onServiceAdded, so iOS never sees a half-built GATT database.
@@ -154,6 +192,12 @@ class BridgePeripheral(
 
     @Synchronized
     fun close() {
+        serverEpoch++
+        synchronized(notifyQueue) {
+            notifyDeadline?.let(notifyHandler::removeCallbacks); notifyDeadline = null
+            notifyQueue.clear(); notifyInFlight = null; notifyBroken = false
+        }
+        mtus.clear()
         stopAdvertising()
         server?.close()
         server = null
@@ -175,10 +219,19 @@ class BridgePeripheral(
             .setTimeout(0)
             .build()
 
-        // Legacy advertising is limited to 31 bytes, so the 128-bit UUIDs go in separate packets:
-        // the ANCS solicitation goes in the advertisement (for iOS's system-level consumer), and the
-        // bridge UUID goes in the scan response (iOS scans actively in the foreground).
-        val (data, scanResponse) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        // Each legacy packet is limited to 31 bytes. During explicit setup, put Bridge in the
+        // main packet so discovery doesn't depend on receiving a scan response. Once approved,
+        // prioritize ANCS solicitation for iOS system reconnection while the app is suspended.
+        val (data, scanResponse) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && discoveryFirst) {
+            AdvertiseData.Builder()
+                .setIncludeDeviceName(false)
+                .addServiceUuid(ParcelUuid(BridgeUuids.SERVICE))
+                .build() to
+                AdvertiseData.Builder()
+                    .setIncludeDeviceName(false)
+                    .addServiceSolicitationUuid(ParcelUuid(AncsUuids.SERVICE))
+                    .build()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AdvertiseData.Builder()
                 .setIncludeDeviceName(false)
                 .addServiceSolicitationUuid(ParcelUuid(AncsUuids.SERVICE))
@@ -200,7 +253,7 @@ class BridgePeripheral(
 
     private val advertiseCallback = object : AdvertiseCallback() {
         override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
-            DiagLog.i("advertising started solicitation=${Build.VERSION.SDK_INT >= Build.VERSION_CODES.S}")
+            DiagLog.i("advertising started solicitation=${Build.VERSION.SDK_INT >= Build.VERSION_CODES.S} discoveryFirst=$discoveryFirst")
         }
 
         override fun onStartFailure(errorCode: Int) {
@@ -211,8 +264,9 @@ class BridgePeripheral(
         }
     }
 
-    private val serverCallback = object : BluetoothGattServerCallback() {
+    private fun serverCallback(epoch: Long) = object : BluetoothGattServerCallback() {
         override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+            if (epoch != serverEpoch) return
             if (service.uuid != BridgeUuids.SERVICE) return
             DiagLog.i("bridge service added status=$status")
             synchronized(this@BridgePeripheral) {
@@ -222,32 +276,47 @@ class BridgePeripheral(
         }
 
         override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+            if (epoch != serverEpoch) return
             DiagLog.i("server link ${Redact.device(device)} state=$newState status=$status")
             when (newState) {
                 BluetoothProfile.STATE_CONNECTED -> listener.onCentralConnected(device)
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     mtus.remove(device.address)
-                    synchronized(notifyQueue) {
+                    val rebuilding = synchronized(notifyQueue) {
                         notifyQueue.removeAll { it.device.address == device.address }
-                        if (notifyQueue.isEmpty()) notifyInFlight = false
+                        if (notifyInFlight?.device?.address == device.address) {
+                            // A late ACK from this link cannot be assigned to a later notification.
+                            failNotifications(device)
+                        }
+                        notifyBroken
                     }
-                    listener.onCentralDisconnected(device)
+                    if (!rebuilding) listener.onCentralDisconnected(device)
                 }
             }
         }
 
         override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
+            if (epoch != serverEpoch) return
             mtus[device.address] = mtu
             DiagLog.i("server mtu=$mtu ${Redact.device(device)}")
         }
 
         override fun onNotificationSent(device: BluetoothDevice, status: Int) {
-            synchronized(notifyQueue) { sendNextNotification() }
+            if (epoch != serverEpoch) return
+            synchronized(notifyQueue) {
+                val current = notifyInFlight ?: return
+                if (current.device.address != device.address) return
+                notifyDeadline?.let(notifyHandler::removeCallbacks); notifyDeadline = null
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    DiagLog.w("bridge notify failed status=$status"); failNotifications(device)
+                } else { notifyInFlight = null; sendNextNotification() }
+            }
         }
 
         override fun onDescriptorReadRequest(
             device: BluetoothDevice, requestId: Int, offset: Int, descriptor: android.bluetooth.BluetoothGattDescriptor,
         ) {
+            if (epoch != serverEpoch) return
             server?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, 0, byteArrayOf(0, 0))
         }
 
@@ -255,6 +324,7 @@ class BridgePeripheral(
             device: BluetoothDevice, requestId: Int, descriptor: android.bluetooth.BluetoothGattDescriptor,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
+            if (epoch != serverEpoch) return
             val ok = descriptor.uuid == BridgeUuids.CCCD && descriptor.characteristic.uuid in BridgeUuids.NOTIFYING &&
                 value != null && value.size == 2
             if (responseNeeded) {
@@ -266,6 +336,7 @@ class BridgePeripheral(
         override fun onCharacteristicReadRequest(
             device: BluetoothDevice, requestId: Int, offset: Int, characteristic: BluetoothGattCharacteristic,
         ) {
+            if (epoch != serverEpoch) return
             val value = when (characteristic.uuid) {
                 BridgeUuids.PAIRING -> pairingValue()
                 else -> null
@@ -281,6 +352,7 @@ class BridgePeripheral(
             device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
             preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray?,
         ) {
+            if (epoch != serverEpoch) return
             val ok = characteristic.uuid in WRITABLE &&
                 !preparedWrite && offset == 0 && value != null
             if (responseNeeded) {
@@ -348,7 +420,7 @@ class BridgePeripheral(
     private fun pairingValue(): ByteArray {
         val caps = BridgeUuids.CAP_ANCS_CLIENT or BridgeUuids.CAP_AMS_CLIENT or BridgeUuids.CAP_SETTINGS or
             BridgeUuids.CAP_DEVICE_STATUS or BridgeUuids.CAP_FIND or BridgeUuids.CAP_PREFS or BridgeUuids.CAP_SECURE or
-            BridgeUuids.CAP_CONTACTS
+            BridgeUuids.CAP_CONTACTS or BridgeUuids.CAP_LIFECYCLE
         return byteArrayOf(
             BridgeUuids.PROTOCOL_VERSION.toByte(),
             caps.toByte(), (caps ushr 8).toByte(), (caps ushr 16).toByte(), (caps ushr 24).toByte(),

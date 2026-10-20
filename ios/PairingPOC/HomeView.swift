@@ -12,17 +12,23 @@ struct HomeView: View {
                 VStack(spacing: 22) {
                     hero
                     if link.phase == .connected { SecurityCard(link: link) }
-                    FindIPhoneAlertsCard()
-                    if link.phase == .connected || link.watchStatus != nil {
+                    if link.isConnected {
+                        FindIPhoneAlertsCard()
                         StatsCard(link: link)
                     }
                     if link.phase == .connected, let status = link.watchStatus, !status.notificationsReady {
-                        NotificationsOffCard()
+                        NotificationConnectionCard()
                     }
-                    if link.phase == .searching && link.showingAllNearby {
+                    if link.phase == .searching {
                         NearbyList(items: link.nearby, onChoose: link.choose)
                     }
-                    primaryList
+                    if link.isConnected { primaryList }
+                    NavigationLink { DeviceView(link: link) } label: {
+                        Row(symbol: "applewatch", tint: .blue, title: "Pairing & Devices", value: link.pairingStateTitle)
+                    }.card()
+                    if let message = link.removalMessage {
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
+                    }
                     secondaryList
                 }
                 .padding(.horizontal, 20)
@@ -32,6 +38,9 @@ struct HomeView: View {
             .animation(.smooth, value: link.phase)
             .navigationBarTitleDisplayMode(.inline)
         }
+        // Remove any open feature's navigation stack as soon as its secure connection disappears.
+        .id(link.isConnected)
+
     }
 
     private var hero: some View {
@@ -39,10 +48,13 @@ struct HomeView: View {
             WatchGlyph(phase: link.phase)
                 .frame(width: 150, height: 150)
                 .padding(.top, 12)
-            Text(link.watchStatus?.displayName ?? link.watchName ?? "Galaxy Watch")
+            Text(link.isConnected ? (link.watchStatus?.displayName ?? link.watchName ?? "Galaxy Watch") : "Watch")
                 .font(.largeTitle.bold())
                 .multilineTextAlignment(.center)
-            StatusPill(phase: link.phase)
+            Text(link.pairingStateTitle).font(.headline).foregroundStyle(.secondary)
+            if link.phase == .connected && !link.isConnected {
+                Text(link.security.statusTitle).font(.callout)
+            } else { StatusPill(phase: link.phase) }
             if link.phase != .connected, let detail = link.phase.detail {
                 Text(detail)
                     .font(.callout)
@@ -57,9 +69,12 @@ struct HomeView: View {
     private var heroAction: some View {
         switch link.phase {
         case .notSetUp:
-            Button("Find Watch", action: link.findWatch).buttonStyle(PrimaryButtonStyle())
+            Button(link.hasSavedWatch ? "Pair Watch Again" : "Pair Watch", action: link.findWatch).buttonStyle(PrimaryButtonStyle())
         case .needsAttention:
             Button("Try Again", action: link.findWatch).buttonStyle(PrimaryButtonStyle())
+            if link.isPairingInProgress {
+                Button("Cancel Pairing", role: .cancel, action: link.cancelPairing).font(.callout)
+            }
         case .searching:
             HStack(spacing: 20) {
                 if !link.showingAllNearby { Button("Show nearby devices", action: link.showAllNearby) }
@@ -72,7 +87,10 @@ struct HomeView: View {
             }
             .buttonStyle(PrimaryButtonStyle())
         default:
-            EmptyView()
+            // Connecting, Bluetooth pairing or waiting for the watch's approval: setup can be abandoned.
+            if link.isPairingInProgress {
+                Button("Cancel Pairing", role: .cancel, action: link.cancelPairing).font(.callout)
+            }
         }
     }
 
@@ -162,7 +180,7 @@ private struct StatsCard: View {
             Divider().frame(height: 44)
             stat(
                 symbol: notificationsOn ? "bell.fill" : "bell.slash",
-                value: notificationsOn ? "On" : (link.phase == .connected ? "Off" : "–"),
+                value: notificationsOn ? "On" : (link.phase == .connected ? "Waiting" : "–"),
                 label: "Notifications"
             )
             Divider().frame(height: 44)
@@ -206,13 +224,16 @@ private struct StatsCard: View {
     }
 }
 
-private struct NotificationsOffCard: View {
+private struct NotificationConnectionCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Turn on notifications for your watch", systemImage: "exclamationmark.triangle.fill")
+            Label("Notifications aren’t connected yet", systemImage: "exclamationmark.triangle.fill")
                 .font(.headline)
                 .foregroundStyle(.orange)
             ShareNotificationsSteps()
+            Text("If sharing is already on, reconnect from Bridge on your watch.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
         }
     }
 }

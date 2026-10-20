@@ -1,11 +1,19 @@
 package io.wearbridge.watch.ui
 
 import android.content.Intent
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.runtime.Composable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.wearbridge.watch.BridgeGraph
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -18,6 +26,12 @@ import io.wearbridge.watch.service.BridgeService
 class MainActivity : ComponentActivity() {
 
     private var hasPermissions by mutableStateOf(false)
+    private var bluetoothEnabled by mutableStateOf(false)
+    private val bluetoothReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            bluetoothEnabled = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR) == BluetoothAdapter.STATE_ON
+        }
+    }
     private var deepLinkUid by mutableStateOf<Long?>(null)
     private var debugRoute by mutableStateOf<String?>(null)
 
@@ -26,11 +40,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ContextCompat.registerReceiver(this, bluetoothReceiver,
+            IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED), ContextCompat.RECEIVER_EXPORTED)
         readDeepLink(intent)
         setContent {
             io.wearbridge.watch.ui.theme.BridgeTheme {
                 WatchApp(
                     hasPermissions = hasPermissions,
+                    bluetoothEnabled = bluetoothEnabled,
                     deepLinkUid = deepLinkUid,
                     onDeepLinkConsumed = { deepLinkUid = null },
                     debugRoute = debugRoute,
@@ -47,6 +64,11 @@ class MainActivity : ComponentActivity() {
         refreshPermissions()
     }
 
+    override fun onDestroy() {
+        unregisterReceiver(bluetoothReceiver)
+        super.onDestroy()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         readDeepLink(intent)
@@ -54,6 +76,7 @@ class MainActivity : ComponentActivity() {
 
     private fun refreshPermissions() {
         hasPermissions = BridgePermissions.hasRequired(this)
+        bluetoothEnabled = hasPermissions && runCatching { getSystemService(BluetoothManager::class.java).adapter?.isEnabled == true }.getOrDefault(false)
         if (hasPermissions) BridgeService.start(this) // idempotent
     }
 
@@ -79,13 +102,21 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun WatchApp(
     hasPermissions: Boolean,
+    bluetoothEnabled: Boolean,
     deepLinkUid: Long?,
     onDeepLinkConsumed: () -> Unit,
     debugRoute: String?,
     onDebugRouteConsumed: () -> Unit,
     onRequestPermissions: () -> Unit,
 ) {
+    val pairing by BridgeGraph.pairing.state.collectAsStateWithLifecycle()
+    val link by BridgeGraph.link.collectAsStateWithLifecycle()
+    val approval by BridgeGraph.pendingApproval.collectAsStateWithLifecycle()
+    val available = pairing.canAccess(link)
     val nav = rememberBridgeNavigator("home")
+    LaunchedEffect(available, nav.top.route) {
+        if (!available) nav.removePeerScreens()
+    }
     LaunchedEffect(deepLinkUid) {
         if (deepLinkUid != null) {
             nav.navigate("notification/$deepLinkUid")
@@ -99,18 +130,26 @@ private fun WatchApp(
         }
     }
     AppScaffold {
-        BridgeNavHost(nav) { route ->
+        val code = approval
+        if (code != null) {
+            PairingApprovalScreen(code, onAllow = { BridgeGraph.approveIphoneApp(true) },
+                onDeny = { BridgeGraph.approveIphoneApp(false) })
+        } else BridgeNavHost(nav) { route ->
             val arg = route.substringAfter('/', "")
-            when (route.substringBefore('/')) {
+            val safeRoute = if (!available && route.substringBefore('/') !in setOf("home", "device", "diagnostics")) "home" else route.substringBefore('/')
+            when (safeRoute) {
                 "home" -> HomeScreen(
                     hasPermissions = hasPermissions,
+                    bluetoothEnabled = bluetoothEnabled,
                     onRequestPermissions = onRequestPermissions,
                     onOpenNotifications = { nav.navigate("notifications") },
                     onOpenMedia = { nav.navigate("media") },
                     onOpenFindPhone = { nav.navigate("find") },
                     onOpenContacts = { nav.navigate("contacts") },
                     onOpenSettings = { nav.navigate("settings") },
+                    onOpenDevice = { nav.navigate("device") },
                 )
+                "device" -> DeviceScreen(hasPermissions, bluetoothEnabled, onRequestPermissions, onDiagnostics = { nav.navigate("diagnostics") })
                 "settings" -> SettingsScreen(onOpenDiagnostics = { nav.navigate("diagnostics") })
                 "media" -> MediaScreen()
                 "contacts" -> io.wearbridge.watch.contacts.ContactsScreen(onOpen = { id -> nav.navigate("contact/" + android.net.Uri.encode(id)) })

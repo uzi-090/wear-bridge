@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Bridge protocol v1, mirroring `wearos/protocol` (Framing.kt, SettingsMessages.kt). See docs/BLE_PROTOCOL.md.
 /// Chunk: | version u8 | type u8 | messageId u8 | flags u8 (bit0 = more) | data… |
@@ -19,16 +20,19 @@ enum BridgeProtocol {
         case findPhoneStopped = 0x11
         case ping = 0x12
         case phoneStatus = 0x13
+        case deviceLifecycle = 0x14
         // EVENTS (watch → iPhone)
         case findPhone = 0x90
         case findWatchStopped = 0x91
         case callRequest = 0x92
+        case deviceLifecycleEvent = 0x93
         // CONTACTS (iPhone → watch)
         case contactsBegin = 0x30
         case contactsUpsert = 0x31
         case contactsDelete = 0x32
         case contactsEnd = 0x33
         case contactsClear = 0x34
+        case contactsCleared = 0x35
         // DEVICE_STATUS (watch → iPhone)
         case status = 0xA0
     }
@@ -44,6 +48,7 @@ enum BridgeProtocol {
         static let prefs = Capabilities(rawValue: 1 << 5)
         static let secure = Capabilities(rawValue: 1 << 6)
         static let contacts = Capabilities(rawValue: 1 << 7)
+        static let lifecycle = Capabilities(rawValue: 1 << 8)
     }
 
     static func split(type: MessageType, messageId: UInt8, payload: [UInt8], maxChunkBytes: Int) -> [Data] {
@@ -389,6 +394,27 @@ enum ContactsCodec {
         w.u8(full ? 1 : 0)
         w.u16(min(count, 0xFFFF))
         return w.bytes
+    }
+
+    static func begin(full: Bool, count: Int, deletes: Int, transaction: UInt32) -> [UInt8] {
+        var w = ByteWriter(); w.u8(full ? 1 : 0); w.u16(count); w.u16(deletes); w.u32(transaction)
+        return w.bytes
+    }
+
+    static func end(generation: UInt32, transaction: UInt32, contacts: [SyncContact]) -> [UInt8] {
+        var w = ByteWriter(); w.u32(generation); w.u32(transaction)
+        return w.bytes + bookDigest(contacts)
+    }
+
+    static func bookDigest(_ contacts: [SyncContact]) -> [UInt8] {
+        var bytes = ByteWriter(); bytes.u32(UInt32(contacts.count))
+        var data = Data(bytes.bytes)
+        for contact in contacts.sorted(by: { Array($0.id.utf8).lexicographicallyPrecedes(Array($1.id.utf8)) }) {
+            let record = upsert([contact])
+            var length = ByteWriter(); length.u32(UInt32(record.count))
+            data.append(contentsOf: length.bytes); data.append(contentsOf: record)
+        }
+        return Array(SHA256.hash(data: data))
     }
 
     static func upsert(_ contacts: [SyncContact]) -> [UInt8] {

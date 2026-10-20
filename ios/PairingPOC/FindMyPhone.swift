@@ -127,12 +127,15 @@ final class FindMyPhone: NSObject {
 }
 
 extension FindMyPhone: UNUserNotificationCenterDelegate {
-    /// In the foreground the app plays its own sound and shows its own screen, so no banner.
+    /// Find iPhone has its own foreground screen; battery warnings still show a banner and sound.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        []
+        if notification.request.identifier.hasPrefix(LowBatteryAlerts.notificationPrefix) {
+            return [.banner, .list, .sound]
+        }
+        return []
     }
 
     /// Tapping the notification means the user has the iPhone in hand.
@@ -151,6 +154,12 @@ extension FindMyPhone: UNUserNotificationCenterDelegate {
 @MainActor
 enum CallHandoff {
     static let notificationId = "call-request"
+
+    static func disconnected() {
+        let center = UNUserNotificationCenter.current()
+        center.removeDeliveredNotifications(withIdentifiers: [notificationId])
+        center.removePendingNotificationRequests(withIdentifiers: [notificationId])
+    }
 
     static func offer(phone: String, name: String) {
         if UIApplication.shared.applicationState == .active {

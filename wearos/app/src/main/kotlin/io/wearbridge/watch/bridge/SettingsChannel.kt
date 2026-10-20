@@ -148,6 +148,7 @@ class SettingsChannel(
     }
 
     private fun send(device: BluetoothDevice) {
+        if (BridgeGraph.pairing.state.value.phase != io.wearbridge.watch.ble.PairingPhase.PAIRED) return
         val payload = secure.seal(device, MessageType.SETTINGS, SettingsCodec.encodeSnapshot(snapshot())) ?: return
         messageId = (messageId + 1) and 0xFF
         val chunks = Framing.split(MessageType.SETTINGS, messageId, payload, peripheral.maxPayload(device))

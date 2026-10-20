@@ -84,13 +84,13 @@ fun MediaScreen() {
     val link by BridgeGraph.link.collectAsStateWithLifecycle()
     val np = media
     val seen by BridgeGraph.policy.seenApps.collectAsStateWithLifecycle()
-    val app = remember(np?.playerName, seen) { np?.takeIf { it.hasPlayer }?.let { AppCatalog.forPlayerName(it.playerName, seen) } }
+    val app = remember(np?.playerName, np?.hasMediaSession, seen) { np?.takeIf { it.hasMediaSession }?.let { AppCatalog.forPlayerName(it.playerName, seen) } }
 
     ScreenScaffold {
         when {
             np == null && link.state != LinkState.READY -> EmptyMedia("Not connected", "Connect to your iPhone to control what it's playing.")
             np == null -> EmptyMedia("Media unavailable", "Your iPhone isn't sharing media controls right now.")
-            !np.hasPlayer || app == null -> EmptyMedia("Nothing playing", "Start music or a podcast on your iPhone, then control it here.")
+            !np.hasMediaSession || app == null -> EmptyMedia("Nothing playing", "Start music or a podcast on your iPhone, then control it here.")
             else -> Player(np, app)
         }
     }
@@ -190,7 +190,7 @@ private fun Player(np: NowPlaying, app: AppInfo) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 SkipButton(R.drawable.ic_skip_previous, "Previous", np.can(RemoteCommand.PREVIOUS_TRACK)) { send(RemoteCommand.PREVIOUS_TRACK) }
-                PlayPause(np, now, palette) { send(RemoteCommand.TOGGLE_PLAY_PAUSE) }
+                PlayPause(np, now, palette) { np.playPauseCommand?.let(::send) }
                 SkipButton(R.drawable.ic_skip_next, "Next", np.can(RemoteCommand.NEXT_TRACK)) { send(RemoteCommand.NEXT_TRACK) }
             }
             Box(Modifier.weight(0.78f).fillMaxWidth().padding(top = 6.dp), contentAlignment = Alignment.TopCenter) {
@@ -230,7 +230,7 @@ private fun PlayPause(np: NowPlaying, now: Long, palette: MediaPalette, onClick:
         )
         FilledIconButton(
             onClick = onClick,
-            enabled = np.can(RemoteCommand.TOGGLE_PLAY_PAUSE) || np.can(RemoteCommand.PLAY) || np.can(RemoteCommand.PAUSE),
+            enabled = np.playPauseCommand != null,
             colors = IconButtonDefaults.filledIconButtonColors(containerColor = palette.accent, contentColor = palette.onAccent),
             modifier = Modifier.size(58.dp),
         ) {
@@ -285,12 +285,14 @@ private class VolumeState(private val haptic: () -> Unit) {
     val percentText: String get() = if (known) "${(fraction * 100).roundToInt()}%" else "–"
 
     fun step(up: Boolean) {
+        val command = if (up) RemoteCommand.VOLUME_UP else RemoteCommand.VOLUME_DOWN
+        if (BridgeGraph.media.value?.can(command) != true) return
         val next = (level + if (up) 1 else -1).coerceIn(0, STEPS)
         if (known && next == level) return // already at the end: no command, no tick
         level = next
         fraction = next / STEPS.toFloat()
         haptic()
-        BridgeGraph.mediaCommand(if (up) RemoteCommand.VOLUME_UP else RemoteCommand.VOLUME_DOWN)
+        BridgeGraph.mediaCommand(command)
     }
 }
 
@@ -345,7 +347,7 @@ private fun clock(seconds: Double): String {
 }
 
 /** iOS lists the commands the current player supports. An empty list means unknown: allow everything. */
-private fun NowPlaying.can(c: RemoteCommand) = supported.isEmpty() || c in supported
+
 
 @Composable
 private fun EmptyMedia(title: String, detail: String) {

@@ -22,6 +22,8 @@ class SecureLink(
     private val peripheral: BridgePeripheral,
     private val identity: IdentityStore,
     private val prompt: ApprovalPrompt,
+    /** A new iPhone app key asks for approval; [request] identifies it for [expire]. */
+    private val onApprovalRequired: (request: Int) -> Unit,
     private val onEstablished: (BluetoothDevice) -> Unit,
 ) {
     interface ApprovalPrompt {
@@ -34,8 +36,16 @@ class SecureLink(
     private val sessions = HashMap<String, SecureSession>()
     private val reassemblers = HashMap<String, Reassembler>()
     private var pending: Pending? = null
+    private var request = 0
     private var messageId = 0
     private val random = SecureRandom()
+
+    fun reset() {
+        sessions.clear()
+        reassemblers.clear()
+        pending = null
+        prompt.dismiss()
+    }
 
     fun hasSession(device: BluetoothDevice) = device.address in sessions
 
@@ -64,6 +74,23 @@ class SecureLink(
             pending = null
             prompt.dismiss()
         }
+    }
+
+    /** An unanswered approval [request] ends as a denial, so a late tap can't pair a phone that gave up. */
+    fun expire(request: Int): Boolean {
+        if (pending == null || request != this.request) return false
+        DiagLog.i("secure: approval request expired")
+        approve(false)
+        return true
+    }
+
+    /** The iPhone app stopped listening for the answer (Cancel Pairing): drop its request. */
+    fun withdraw(device: BluetoothDevice): Boolean {
+        if (pending?.device?.address != device.address) return false
+        DiagLog.i("secure: approval request withdrawn by the iPhone")
+        pending = null
+        prompt.dismiss()
+        return true
     }
 
     /** The user answered the "Allow Bridge on iPhone?" prompt. */
@@ -101,6 +128,9 @@ class SecureLink(
             establish(device, staticKey, nonceI)
             return
         }
+        // A new app identity cannot inherit the previous app's ANCS access while awaiting approval.
+        sessions.remove(device.address)
+        onApprovalRequired(++request)
         pending = Pending(device, iphoneKey, staticKey, nonceI)
         val code = BridgeCrypto.pairingCode(staticKey, iphoneKey, identity.publicKey)
         DiagLog.i("secure: new iPhone app, waiting for approval on the watch")

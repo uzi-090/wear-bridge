@@ -49,6 +49,7 @@ class AncsClient(
         for (characteristic in listOf(ds, ns)) {
             val status = gatt.enableNotifications(queue, characteristic)
             if (status != 0) {
+                io.wearbridge.watch.diagnostics.DiagLog.w("ancs subscribe ${if (characteristic === ns) "notification" else "data"} source status=$status")
                 return if (status in AUTH_STATUSES) SubscribeResult.AUTH_REQUIRED else SubscribeResult.FAILED
             }
         }
@@ -68,7 +69,7 @@ class AncsClient(
             val status = if (cp == null) {
                 GattOpQueue.STATUS_NOT_STARTED
             } else {
-                queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC) {
+                queue.run(GattOpQueue.Kind.WRITE_CHARACTERISTIC, target = cp.uuid.toString()) {
                     gatt.writeCharacteristicCompat(cp, payload, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
                 }.status
             }

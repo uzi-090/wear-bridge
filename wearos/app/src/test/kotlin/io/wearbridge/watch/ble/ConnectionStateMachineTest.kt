@@ -131,4 +131,39 @@ class ConnectionStateMachineTest {
         assertEquals(LinkState.DISCONNECTED, sm.snapshot.state)
         assertTrue(sm.on(LinkEvent.CentralConnected).isEmpty())
     }
+    @Test fun unpairImmediatelyInvalidatesBatteryAndSessionEvenBeforeDisconnectCallback() {
+        ready()
+        val effects = sm.on(LinkEvent.BondRemoved)
+        assertEquals(LinkState.ADVERTISING, sm.snapshot.state)
+        assertTrue(LinkEffect.ResetSession in effects)
+        assertTrue(LinkEffect.CloseClient in effects)
+        assertTrue(LinkEffect.DisconnectCentral in effects)
+        assertTrue(StartAdvertising in effects)
+        assertTrue(sm.on(LinkEvent.Subscribed).isEmpty())
+        assertTrue(sm.on(LinkEvent.CentralDisconnected).isEmpty())
+    }
+    @Test fun emptyServiceDiscoveryRebuildsClientWithBoundedRetries() {
+        sm.on(LinkEvent.Start)
+        sm.on(LinkEvent.CentralConnected)
+        sm.on(LinkEvent.ClientReady)
+        val effects = sm.on(LinkEvent.ServicesDiscovered(false, true, 0))
+        assertEquals(LinkState.CONNECTED, sm.snapshot.state)
+        assertTrue(CloseClient in effects)
+        assertEquals(listOf(OpenClient), sm.on(LinkEvent.RetryTimer))
+        repeat(8) {
+            sm.on(LinkEvent.ClientReady)
+            sm.on(LinkEvent.ServicesDiscovered(false, true, 0))
+        }
+        assertEquals(LinkState.ERROR, sm.snapshot.state)
+        assertTrue(sm.on(LinkEvent.RetryTimer).isEmpty())
+    }
+    @Test fun permissionRevocationClearsLiveSessionAndIgnoresLateCallbacks() {
+        ready()
+        val effects = sm.on(LinkEvent.PermissionMissing)
+        assertTrue(LinkEffect.ResetSession in effects && LinkEffect.ClosePeripheral in effects && CloseClient in effects)
+        assertTrue(sm.on(LinkEvent.Subscribed).isEmpty())
+        assertTrue(sm.on(LinkEvent.CentralDisconnected).isEmpty())
+        assertEquals(LinkIssue.PERMISSION_MISSING, sm.snapshot.issue)
+    }
+
 }

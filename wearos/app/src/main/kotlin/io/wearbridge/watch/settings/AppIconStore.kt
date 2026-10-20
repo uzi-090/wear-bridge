@@ -26,6 +26,14 @@ class AppIconStore(context: Context) {
     @Volatile
     private var known: Set<String> = dir.listFiles()?.map { it.name.removeSuffix(SUFFIX) }?.toSet().orEmpty()
 
+    @Synchronized
+    fun clear() {
+        dir.listFiles()?.forEach { check(it.delete()) }
+        cache.evictAll()
+        known = emptySet()
+        _version.value++
+    }
+
     fun has(bundleId: String?): Boolean = bundleId != null && fileName(bundleId) in known
 
     /** Validates and stores an icon. Returns false if it isn't a sensible image. */
@@ -44,6 +52,7 @@ class AppIconStore(context: Context) {
     }
 
     /** The icon as a [CIRCLE_PX] circle, ready to draw without scaling or clipping. Decodes on a cache miss. */
+    @Synchronized
     fun circle(bundleId: String?): Bitmap? {
         if (!has(bundleId)) return null
         val name = fileName(bundleId!!)

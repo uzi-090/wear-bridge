@@ -166,7 +166,6 @@ struct MediaInfoView: View {
 
 struct SettingsView: View {
     let link: WatchLink
-    @State private var confirmForget = false
     @State private var iconsCleared = false
     @State private var alerts: UNAuthorizationStatus?
 
@@ -196,15 +195,15 @@ struct SettingsView: View {
                     }
                 }
             } header: {
-                Text("Find iPhone")
+                Text("Bridge alerts")
             } footer: {
-                Text("When Bridge is in the background, your watch rings this iPhone with an alert. The ring switch and Focus still apply. If you swipe Bridge away, it can't ring until you open it again.")
+                Text("Bridge alerts you when your watch battery reaches 10% or below, while it is not charging. Charging clears the warning; unplugging at 10% or below starts a new warning. These alerts also let your watch ring this iPhone. The ring switch and Focus apply. Keep Bluetooth connected; if you swipe Bridge away, alerts cannot arrive until you open it again.")
             }
 
             Section {
                 LabeledContent("Auto reconnect", value: "On")
                 LabeledContent("Battery use", value: "Event-driven")
-                Button("Re-pair Watch", role: .destructive) { confirmForget = true }
+                NavigationLink("Manage Device") { DeviceView(link: link) }
             } header: {
                 Text("Connection")
             } footer: {
@@ -235,11 +234,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .task { alerts = await FindMyPhone.shared.authorizationStatus() }
-        .confirmationDialog("Re-pair your watch?", isPresented: $confirmForget, titleVisibility: .visible) {
-            Button("Forget Watch", role: .destructive, action: link.forgetWatch)
-        } message: {
-            Text("Then open Settings › Bluetooth, tap ⓘ next to your watch and choose Forget This Device, and set it up again from the home screen.")
-        }
+
     }
 }
 

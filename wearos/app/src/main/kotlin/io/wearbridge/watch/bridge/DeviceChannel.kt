@@ -35,6 +35,8 @@ class DeviceChannel(
     private val secure: SecureLink,
     private val scope: CoroutineScope,
     private val appVersion: String,
+    private val context: android.content.Context,
+    private val onLifecycle: (BridgeCodec.Lifecycle) -> Unit,
 ) {
     private val reassemblers = HashMap<String, Reassembler>()
     private val statusSubscribers = HashMap<String, BluetoothDevice>()
@@ -100,6 +102,11 @@ class DeviceChannel(
 
     private fun handle(device: BluetoothDevice, m: Reassembler.Message) {
         try {
+            if (m.type == BridgeMessageType.DEVICE_LIFECYCLE) {
+                onLifecycle(BridgeCodec.decodeLifecycle(m.payload))
+                return
+            }
+            if (!BridgeGraph.pairing.state.value.enabled) return
             when (m.type) {
                 BridgeMessageType.FIND_WATCH -> {
                     val on = BridgeCodec.decodeSwitch(m.payload)
@@ -113,6 +120,7 @@ class DeviceChannel(
                 BridgeMessageType.PING -> sendStatus(device)
                 BridgeMessageType.PHONE_STATUS -> {
                     val s = BridgeCodec.decodePhoneStatus(m.payload)
+                    io.wearbridge.watch.battery.LowBatteryAlerts.receive(context, device.address, s.battery, s.charging || s.full)
                     BridgeGraph.phoneChargingFlow.value = s.charging || s.full
                     BridgeGraph.phoneStatusReportedAt = android.os.SystemClock.elapsedRealtime()
                     // The Battery Service is the primary source of the level; use the app's if it's missing.
@@ -136,6 +144,7 @@ class DeviceChannel(
     }
 
     private fun sendStatus(device: BluetoothDevice) {
+        if (BridgeGraph.pairing.state.value.phase != io.wearbridge.watch.ble.PairingPhase.PAIRED) return
         val s = status(BridgeGraph.watchBattery.value, BridgeGraph.link.value.state == LinkState.READY,
             BridgeGraph.media.value != null, BridgeGraph.repository.items.value.size)
         send(device, BridgeUuids.DEVICE_STATUS, BridgeMessageType.STATUS, BridgeCodec.encodeStatus(s))

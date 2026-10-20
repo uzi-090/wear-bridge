@@ -6,6 +6,12 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.Build
+import android.app.ForegroundServiceStartNotAllowedException
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import io.wearbridge.watch.BridgeGraph
@@ -41,12 +47,25 @@ class BridgeService : Service() {
             stopSelf()
             return
         }
-        ServiceCompat.startForeground(
+        try { ServiceCompat.startForeground(
             this,
             MirrorNotifier.SERVICE_NOTIFICATION_ID,
             BridgeGraph.notifier.serviceNotification("Starting…"),
             ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
-        )
+        ) } catch (e: RuntimeException) {
+            if (!isStartupRestriction(e)) throw e
+            needsForegroundOpen(this)
+            stopSelf()
+            return
+        }
+        // Checked after startForeground: a service started as foreground must call it even when it
+        // stops at once (pairing was cancelled between start and create), or the app is killed.
+        if (!BridgeGraph.pairing.state.value.enabled) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        getSystemService(NotificationManager::class.java).cancel(RECOVERY_NOTIFICATION)
         BridgeGraph.notifier.clearOrphans()
         controller = ConnectionManager(applicationContext, BridgeGraph.repository) { scope ->
             NotificationEngine(BridgeGraph.repository, BridgeGraph.notifier, BridgeGraph.settings, BridgeGraph.policy, scope)
@@ -54,6 +73,11 @@ class BridgeService : Service() {
             BridgeGraph.controller = it
             it.start()
             it.setForeground(BridgeGraph.appForeground)
+        }
+        scope.launch {
+            BridgeGraph.pairing.state.collect {
+                if (it.phase == io.wearbridge.watch.ble.PairingPhase.UNPAIRED) stopSelf()
+            }
         }
         scope.launch {
             BridgeGraph.link.map { it.state }.distinctUntilChanged().collect { state ->
@@ -89,8 +113,34 @@ class BridgeService : Service() {
         const val ACTION_RECONNECT = "io.wearbridge.watch.RECONNECT"
 
         fun start(context: Context) {
-            if (!BridgePermissions.hasRequired(context)) return
-            ContextCompat.startForegroundService(context, Intent(context, BridgeService::class.java))
+            if (!BridgePermissions.hasRequired(context) || !BridgeGraph.pairing.state.value.enabled) return
+            try { ContextCompat.startForegroundService(context, Intent(context, BridgeService::class.java)) }
+            catch (e: RuntimeException) {
+                if (!isStartupRestriction(e)) throw e
+                needsForegroundOpen(context)
+            }
+        }
+
+        private const val RECOVERY_NOTIFICATION = 2
+        private fun isStartupRestriction(e: RuntimeException): Boolean = e is SecurityException ||
+            (Build.VERSION.SDK_INT >= 31 && e is ForegroundServiceStartNotAllowedException)
+
+        @android.annotation.SuppressLint("MissingPermission")
+        private fun needsForegroundOpen(context: Context) {
+            DiagLog.w("background startup blocked; open Bridge to recover")
+            BridgeGraph.linkFlow.value = io.wearbridge.watch.ble.LinkSnapshot(LinkState.ERROR,
+                io.wearbridge.watch.ble.LinkIssue.BACKGROUND_START_BLOCKED)
+            if (!BridgeGraph.notifier.canPost) return
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(NotificationChannel("startup_recovery", "Connection recovery", NotificationManager.IMPORTANCE_DEFAULT))
+            val open = PendingIntent.getActivity(context, 200,
+                Intent(context, io.wearbridge.watch.ui.MainActivity::class.java),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            manager.notify(RECOVERY_NOTIFICATION, NotificationCompat.Builder(context, "startup_recovery")
+                .setSmallIcon(io.wearbridge.watch.R.drawable.ic_stat_bridge)
+                .setContentTitle("Open Bridge to reconnect")
+                .setContentText("Your watch paused background startup. Tap to restore your iPhone connection.")
+                .setContentIntent(open).setAutoCancel(true).setLocalOnly(true).build())
         }
     }
 }

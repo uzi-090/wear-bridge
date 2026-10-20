@@ -8,16 +8,18 @@ package io.wearbridge.protocol
  * resync whenever it doesn't match what it last sent. See docs/BLE_PROTOCOL.md.
  */
 object ContactsMessageType {
-    /** u8 full (1 = replace everything), u16 expected contact count (for progress). */
+    /** Extended: u8 full, u16 upserts, u16 deletes, u32 transaction ID. Legacy full: 3 bytes. */
     const val BEGIN = 0x30
     /** u8 count, then per contact: see [ContactsCodec.encodeUpsert]. */
     const val UPSERT = 0x31
     /** u8 count, then str id per contact. */
     const val DELETE = 0x32
-    /** u32 generation (never 0). */
+    /** Extended: u32 generation, u32 transaction ID, SHA-256 book digest. Legacy full: 4 bytes. */
     const val END = 0x33
-    /** empty: remove every contact from the watch (the user turned sync off). */
+    /** 16-byte request nonce, echoed by CLEARED after durable removal. Legacy empty remains accepted. */
     const val CLEAR = 0x34
+    /** EVENTS: echo the 16-byte CLEAR request nonce only after durable deletion. */
+    const val CLEARED = 0x35
 }
 
 /** The minimal watch-side contact (§14). Phones are normalized: digits with an optional leading "+". */
@@ -36,14 +38,47 @@ object ContactsCodec {
     const val MAX_PHONES = 8
     const val MAX_EMAILS = 3
 
+    /** Extended transaction envelope. Legacy full transfers remain readable; incremental needs integrity metadata. */
+    fun encodeBegin(full: Boolean, count: Int, deletes: Int, transaction: Long): ByteArray {
+        require(count in 0..65535 && deletes in 0..65535 && transaction in 1..0xFFFFFFFFL)
+        return Bytes.Writer().apply { u8(if (full) 1 else 0); u16(count); u16(deletes); u32(transaction) }.bytes()
+    }
+
+    fun encodeEnd(generation: Long, transaction: Long, digest: ByteArray): ByteArray {
+        require(digest.size == 32 && generation in 1..0xFFFFFFFFL && transaction in 1..0xFFFFFFFFL)
+        return Bytes.Writer().apply { u32(generation); u32(transaction) }.bytes() + digest
+    }
+
+    /** Canonical UTF-8 ID order and exact wire records, shared with the iPhone encoder. */
+    fun bookDigest(contacts: Collection<Contact>): ByteArray {
+        val hash = java.security.MessageDigest.getInstance("SHA-256")
+        hash.update(Bytes.Writer().apply { u32(contacts.size.toLong()) }.bytes())
+        val sorted = contacts.sortedWith { a, b ->
+            val x = a.id.toByteArray(Charsets.UTF_8); val y = b.id.toByteArray(Charsets.UTF_8)
+            var result = 0
+            for (i in 0 until minOf(x.size, y.size)) {
+                result = (x[i].toInt() and 255) - (y[i].toInt() and 255)
+                if (result != 0) break
+            }
+            if (result == 0) x.size - y.size else result
+        }
+        sorted.forEach { contact ->
+            val record = encodeUpsert(listOf(contact))
+            hash.update(Bytes.Writer().apply { u32(record.size.toLong()) }.bytes()); hash.update(record)
+        }
+        return hash.digest()
+    }
+
     fun encodeBegin(full: Boolean, count: Int): ByteArray = Bytes.Writer().apply {
         u8(if (full) 1 else 0)
         u16(count.coerceIn(0, 0xFFFF))
     }.bytes()
 
     fun decodeBegin(bytes: ByteArray): Pair<Boolean, Int> {
+        require(bytes.size == 3 || bytes.size == 9)
         val r = Bytes.Reader(bytes)
-        return (r.u8() == 1) to r.u16()
+        val flag = r.u8(); require(flag in 0..1)
+        return (flag == 1) to r.u16()
     }
 
     /** Per contact: str id, str name, u8 flags (bit0 favorite), u8 n + str phones, u8 n + str emails. */
@@ -65,7 +100,7 @@ object ContactsCodec {
 
     fun decodeUpsert(bytes: ByteArray): List<Contact> {
         val r = Bytes.Reader(bytes)
-        return List(r.u8()) {
+        val contacts = List(r.u8()) {
             val id = r.str()
             val name = r.str()
             val favorite = r.u8() and 1 != 0
@@ -73,6 +108,8 @@ object ContactsCodec {
             val emails = List(r.u8()) { r.str() }
             Contact(id, name, phones, emails, favorite)
         }
+        require(r.remaining == 0)
+        return contacts
     }
 
     fun encodeDelete(ids: List<String>): ByteArray = Bytes.Writer().apply {
@@ -83,12 +120,15 @@ object ContactsCodec {
 
     fun decodeDelete(bytes: ByteArray): List<String> {
         val r = Bytes.Reader(bytes)
-        return List(r.u8()) { r.str() }
+        val ids = List(r.u8()) { r.str() }
+        require(r.remaining == 0)
+        return ids
     }
 
     fun encodeEnd(generation: Long): ByteArray = Bytes.Writer().apply { u32(generation) }.bytes()
 
     fun decodeEnd(bytes: ByteArray): Long {
+        require(bytes.size == 4 || bytes.size == 40)
         val g = Bytes.Reader(bytes).u32()
         require(g != 0L) { "generation 0 is reserved" }
         return g

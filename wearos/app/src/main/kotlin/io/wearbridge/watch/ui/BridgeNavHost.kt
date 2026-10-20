@@ -49,7 +49,14 @@ class BridgeNavigator internal constructor(initial: List<NavEntry>) {
     internal val top: NavEntry get() = stack.last()
 
     fun navigate(route: String) {
+        if (top.route == route) return
         stack.add(NavEntry(route, nextId++))
+    }
+
+    /** Connection changes keep Device/Diagnostics in place but remove every peer-data route. */
+    fun removePeerScreens() {
+        stack.removeAll { it.route.substringBefore('/') !in setOf("home", "device", "diagnostics") }
+        if (stack.isEmpty()) stack.add(NavEntry("home", nextId++))
     }
 
     fun popBackStack(): Boolean {

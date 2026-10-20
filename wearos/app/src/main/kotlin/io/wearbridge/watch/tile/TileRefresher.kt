@@ -7,10 +7,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 /**
@@ -21,17 +21,24 @@ object TileRefresher {
     @OptIn(FlowPreview::class)
     fun start(context: Context) {
         val app = context.applicationContext
-        CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        scope.launch {
+            // Link loss must invalidate a cached percentage without the media debounce.
+            combine(BridgeGraph.link, BridgeGraph.pairing.state) { link, pairing -> listOf(link.state, link.issue, pairing.phase) }.distinctUntilChanged().collect {
+                TileService.getUpdater(app).requestUpdate(BridgeTileService::class.java)
+            }
+        }
+        scope.launch {
             combine(
                 BridgeGraph.link, BridgeGraph.phoneBattery, BridgeGraph.repository.items, BridgeGraph.media, BridgeGraph.phoneCharging,
             ) { link, battery, items, media, charging ->
                 listOf(
                     link.state, link.issue, battery, items.size, charging,
-                    media?.hasPlayer, media?.isPlaying, media?.playerName, media?.title,
+                    media?.hasMediaSession, media?.state, media?.playerName, media?.title, media?.artist,
+                    media?.supported, media?.commandsKnown,
                 )
             }
                 .distinctUntilChanged()
-                .drop(1)
                 .debounce(1_000)
                 .collect { TileService.getUpdater(app).requestUpdate(BridgeTileService::class.java) }
         }

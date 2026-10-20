@@ -111,7 +111,12 @@ class IncomingCallActivity : ComponentActivity() {
 
         setContent {
             io.wearbridge.watch.ui.theme.BridgeTheme {
-                val ui by BridgeGraph.calls.ui.collectAsStateWithLifecycle()
+                val pairing by BridgeGraph.pairing.state.collectAsStateWithLifecycle()
+                val link by BridgeGraph.link.collectAsStateWithLifecycle()
+                val currentUi by BridgeGraph.calls.ui.collectAsStateWithLifecycle()
+                val available = pairing.canAccess(link)
+                val ui = if (available) currentUi else CallUi.None
+                LaunchedEffect(available) { if (!available) finish() }
                 LaunchedEffect(ui) {
                     // Nothing to show: wait briefly (answering removes the ringing call just before iOS
                     // posts the connected one), then close.
@@ -130,6 +135,7 @@ class IncomingCallActivity : ComponentActivity() {
                         is CallUi.Ringing -> RingingScreen(state)
                         is CallUi.Answering -> AnsweringScreen(state)
                         is CallUi.Active -> ActiveScreen(state)
+                        is CallUi.PhoneHandled -> PhoneHandledScreen(state)
                         is CallUi.Ended -> EndedScreen(state)
                         CallUi.None -> Box(Modifier.fillMaxSize().background(Color.Black))
                     }
@@ -415,6 +421,21 @@ private fun AnsweringScreen(state: CallUi.Answering) {
         Spacer(Modifier.height(10.dp))
         Text(state.caller.name, style = MaterialTheme.typography.titleLarge, color = Color.White, maxLines = 2, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         Text("Answering on iPhone…", style = MaterialTheme.typography.labelMedium, color = Green)
+    }
+}
+
+@Composable
+private fun PhoneHandledScreen(state: CallUi.PhoneHandled) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+        modifier = Modifier.fillMaxSize().background(Color.Black).padding(horizontal = 28.dp),
+    ) {
+        Icon(painterResource(R.drawable.ic_phone_iphone), contentDescription = null,
+            tint = if (state.answered) Green else Color.White, modifier = Modifier.size(40.dp))
+        Spacer(Modifier.height(10.dp))
+        Text(if (state.answered) "Answered on iPhone" else "Call handled on iPhone",
+            style = MaterialTheme.typography.titleMedium, color = Color.White, textAlign = TextAlign.Center)
     }
 }
 
