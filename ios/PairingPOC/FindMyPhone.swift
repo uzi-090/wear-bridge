@@ -1,7 +1,7 @@
 import AVFoundation
 import Observation
 import UIKit
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// "Find iPhone" from the watch. Best effort by design, because iOS decides what a third-party app may do:
 /// - App in the foreground: a looping sound (plays even with the ring switch on silent), plus an in-app screen.
