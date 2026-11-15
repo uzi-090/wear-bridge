@@ -1,6 +1,6 @@
 import CryptoKit
 import Foundation
-import UserNotifications
+@preconcurrency import UserNotifications
 
 /// Same boundary as the watch; only confirmed charging or recovery rearms a warning.
 enum LowBatteryPolicy {
