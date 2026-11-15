@@ -849,7 +849,7 @@ final class WatchLink: NSObject {
 
 // MARK: - CBCentralManagerDelegate (delivered on the main queue, so the conformances are main-actor isolated)
 
-extension WatchLink: @MainActor CBCentralManagerDelegate {
+extension WatchLink: @preconcurrency CBCentralManagerDelegate {
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         note("central state=\(central.state.rawValue)")
@@ -979,7 +979,7 @@ extension WatchLink: @MainActor CBCentralManagerDelegate {
 
 // MARK: - CBPeripheralDelegate
 
-extension WatchLink: @MainActor CBPeripheralDelegate {
+extension WatchLink: @preconcurrency CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard peripheral === self.peripheral else { return }
